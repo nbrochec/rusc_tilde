@@ -2,8 +2,8 @@
 #ifndef CLAP_TILDE_CLAP_CLASSIFIER_H
 #define CLAP_TILDE_CLAP_CLASSIFIER_H
 
-#include <torch/script.h>
 #include <torch/torch.h>
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -56,6 +56,14 @@ public:
         std::lock_guard<std::mutex> lock{m_class_mutex};
         m_pending_classes = std::move(class_names);
         m_classes_pending = true;
+        m_classes_additive = false;
+    }
+
+    void add_classes(std::vector<std::string> class_names) {
+        std::lock_guard<std::mutex> lock{m_class_mutex};
+        m_pending_classes = std::move(class_names);
+        m_classes_pending = true;
+        m_classes_additive = true;
     }
 
     // Queue an audio example to be encoded on the inference thread.
@@ -153,17 +161,29 @@ private:
     void apply_pending_classes() {
         bool pending = false;
         std::vector<std::string> names;
+        bool additive = false;
         {
             std::lock_guard<std::mutex> class_lock{m_class_mutex};
             if (m_classes_pending) {
                 pending = true;
                 names = m_pending_classes;
+                additive = m_classes_additive;
                 m_classes_pending = false;
             }
         }
         if (pending && m_model) {
-            m_text_embeddings = m_model->encode_text(names);
-            m_text_class_names = std::move(names);
+            if (additive) {
+                // Append only names not already present
+                for (const auto& n : names) {
+                    if (std::find(m_text_class_names.begin(), m_text_class_names.end(), n)
+                            == m_text_class_names.end())
+                        m_text_class_names.push_back(n);
+                }
+                m_text_embeddings = m_model->encode_text(m_text_class_names);
+            } else {
+                m_text_embeddings = m_model->encode_text(names);
+                m_text_class_names = std::move(names);
+            }
         }
     }
 
@@ -255,7 +275,8 @@ private:
 
     std::mutex               m_class_mutex;
     std::vector<std::string> m_pending_classes;
-    bool                     m_classes_pending = false;
+    bool                     m_classes_pending  = false;
+    bool                     m_classes_additive = false;
 
     struct PendingAudio { std::string label; std::vector<float> audio; };
     std::vector<PendingAudio> m_pending_audio;

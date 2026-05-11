@@ -303,6 +303,36 @@ public:
         }
     };
 
+    // add_class "drums" "hi-hat"  — append to existing classes without clearing them
+    message<> add_class{this, "add_class",
+        "Append class names to the current set without clearing existing ones.",
+        MIN_FUNCTION {
+            if (inlet != 0) {
+                cerr << "invalid message \"add_class\" for inlet " << inlet << endl;
+                return {};
+            }
+            if (!m_running) {
+                cerr << "cannot add classes: model is not loaded yet" << endl;
+                return {};
+            }
+
+            std::vector<std::string> class_names;
+            for (const auto& a : args)
+                class_names.push_back(std::string(a));
+
+            if (class_names.empty()) {
+                cerr << "add_class: no class names provided" << endl;
+                return {};
+            }
+
+            cout << "[clap~] add_class: " << class_names.size() << " class(es)" << endl;
+            for (const auto& n : class_names) cout << "  - " << n << endl;
+
+            m_classifier->add_classes(std::move(class_names));
+            return {};
+        }
+    };
+
     // Output current class names to dumpout
     message<> classnames{this, "classnames",
         "Output current class names via dumpout.",

@@ -1,11 +1,10 @@
 # clap~
 
-> **Experimental work — vibe-coded.**
-> This external is a research prototype developed at IRCAM (RepMus / REACH team). It is not production software. Expect rough edges, missing documentation, and breaking changes. Use at your own risk.
+> **Experimental / vibe-coded.** Research prototype developed at IRCAM (RepMus / REACH team). Not production software — expect rough edges and breaking changes.
 
-Real-time zero-shot audio classification for Max/MSP, powered by [laion/clap-htsat-fused](https://huggingface.co/laion/clap-htsat-fused).
+Real-time zero-shot audio classification for Max/MSP using [laion/clap-htsat-fused](https://huggingface.co/laion/clap-htsat-fused).
 
-The object listens to incoming audio, segments it into fixed-length windows, and classifies each window against a set of class prototypes using CLAP (Contrastive Language-Audio Pretraining). Class prototypes can be text descriptions, audio examples, or a mix of both.
+`clap~` listens to incoming audio, segments it into fixed-length windows, and classifies each window against a set of class prototypes using CLAP (Contrastive Language-Audio Pretraining). Class prototypes can be text descriptions, audio examples recorded from a `buffer~`, or a mix of both.
 
 **Contributors:** Nicolas Brochec, Claude Sonnet (Anthropic)
 
@@ -15,173 +14,145 @@ The object listens to incoming audio, segments it into fixed-length windows, and
 
 - macOS, Apple Silicon (arm64)
 - Max 8 or later
-- A exported model file — see `scripts/export_clap.py` (TorchScript) or `scripts/export_clap_onnx.py` (ONNX)
+- Python (conda env) for model export — see below
 
 ---
 
-## Object structure
+## Build
 
-### Arguments
-
+```bash
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug
+cmake --build . --target clap_tilde
 ```
-clap~ <model_path> [device]
-```
 
-| Argument | Type | Required | Description |
-|---|---|---|---|
-| `model_path` | symbol | yes | Path to `clap_tilde.ts` or to the directory containing the ONNX model files. `vocab.json` and `merges.txt` must be in the same directory. |
-| `device` | symbol | no | `cpu` (default) or `mps`. MPS enables Metal acceleration via CoreML EP (ONNX backend only — TorchScript falls back to CPU with a warning). |
+The external is output to `externals/clap~.mxo`.
+
+Dependencies (expected in `libs/`): LibTorch, ONNX Runtime. See `CMakeLists.txt` for paths.
 
 ---
+
+## Export the model
+
+Create a conda environment with the required packages, then run the export script from the project root:
+
+```bash
+conda create -n clap python=3.12
+conda activate clap
+pip install torch==2.4.1 torchaudio==2.4.1 transformers==4.44.2 onnx onnxruntime
+
+conda run -n clap python scripts/export_clap_onnx.py
+```
+
+This downloads `laion/clap-htsat-fused` from HuggingFace and writes the following files to `./model/`:
+
+```
+clap_tilde_audio_333ms.onnx   — audio encoder, 333 ms context
+clap_tilde_text.onnx          — text encoder
+clap_tilde_meta.json          — model metadata
+clap_tilde_mel_filters.bin    — mel filterbank coefficients
+vocab.json / merges.txt       — BPE tokenizer files
+```
+
+You can pass `--segment-seconds 0.5` or `--segment-seconds 1.0` to export a different context length. Shorter contexts are more reactive; longer contexts capture more temporal structure.
+
+---
+
+## Usage
+
+```
+[clap~ /path/to/model/clap_tilde_audio_333ms.onnx]
+[clap~ /path/to/model]            — auto-detects the .onnx file in the directory
+[clap~ /path/to/model mps]        — enable CoreML / Apple Neural Engine
+```
 
 ### Inlets
 
-| Inlet | Type | Description |
-|---|---|---|
-| 1 (left) | signal | Audio input — mono, any sample rate (internally resampled to 48 kHz). |
-| 2 (right) | list | Few-shot registration messages (`record`, see below). |
-
----
+| Inlet | Description |
+|---|---|
+| 1 (left) | Audio signal input. Mono, any sample rate (resampled internally to 48 kHz). |
+| 2 (right) | Few-shot registration messages (`record`). |
 
 ### Outlets
 
-| Outlet | Type | Description |
+| Outlet | Description |
+|---|---|
+| 1 (left) | Index of the winning class (int, 0-based). |
+| 2 | Name of the winning class (symbol). |
+| 3 | Full probability distribution over all classes (list of floats). |
+| 4 (dumpout) | `latency <ms>` after each inference. |
+
+---
+
+## Attributes
+
+| Attribute | Default | Description |
 |---|---|---|
-| 1 (left) | int | Index of the winning class (0-based). Only sent when confidence is above the `confidence` threshold. |
-| 2 | symbol | Name of the winning class. |
-| 3 | list | Full probability distribution over all classes (floats, one per class, sum to 1). |
-| 4 (dumpout) | list | Diagnostic output. Currently outputs `latency <ms>` after each inference cycle. |
+| `enabled` | 1 | Turn inference on/off without stopping DSP. |
+| `threshold` | −120 dB | Energy gate — audio below this level is ignored. |
+| `window` | 20 ms | Look-back window for the energy gate. |
+| `confidence` | 0.0 | Minimum winning-class probability to output a result. Below this, all outlets are silent. |
+| `sensitivity` | 1.0 | Smoothing on the probability distribution over time. 0 = maximum smoothing, 1 = no smoothing. |
+| `sensitivityrange` | 2000 ms | Time constant range for the smoothing. Scales the effect of `sensitivity`. |
+| `verbose` | 0 | Print extra information to the Max console. |
 
 ---
 
-### Attributes
+## Messages
 
-| Attribute | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | int (0/1) | 1 | Enable or disable inference without stopping DSP. |
-| `threshold` | float | −120 dB | Energy threshold in dB. Audio below this level is ignored (gate). |
-| `window` | int | 500 ms | Duration of the energy threshold look-back window in milliseconds. |
-| `confidence` | float 0–1 | 0.0 | Minimum winning-class probability to output a result. Below this, outlets are silent. |
-| `sensitivity` | float 0–1 | 1.0 | Smoothing amount applied to the probability distribution over time (leaky integrator). 0 = maximum smoothing, 1 = no smoothing. |
-| `sensitivityrange` | int (ms) | 2000 | Maximum time constant for the leaky integrator in milliseconds. Scales the range of `sensitivity`. |
-| `verbose` | int (0/1) | 0 | Enable verbose logging to the Max console. |
+### Inlet 1
 
----
+**`set_classes <name1> <name2> ...`**
+Set the text class prototypes. Each atom is one class name. Use underscores for multi-word names (`kick_drum`, `hi_hat`). Replaces the current class set entirely.
 
-### Messages (inlet 1)
+**`add_class <name1> <name2> ...`**
+Append class names to the current set without clearing existing ones. Duplicate names are ignored.
 
-#### `set_classes <name1> <name2> ...`
+**`classnames`**
+Output the current active class names to the dumpout as `classnames <name1> <name2> ...`.
 
-Set the text class prototypes. Each atom is one class name (use quoted symbols for multi-word names). The model encodes each name as a text embedding on the next inference cycle.
+### Inlet 2
 
-```
-; example
-set_classes drums hi-hat voice bass
-```
+**`record <label> <buffer_name>`**
+Register an audio example for a class. Reads the named `buffer~`, resamples to 48 kHz, and encodes it as an audio embedding. On the next inference cycle, this embedding replaces the text embedding for that label (or adds a new class if the label was not in the text set). Multiple `record` calls with the same label overwrite the previous example.
 
-Sending new classes replaces the previous set. Audio examples registered with `record` whose label matches a class name will override the text embedding for that label.
+**`clear_example <label>`**
+Remove the audio example for a single label. The class reverts to its text embedding.
 
-#### `classnames`
-
-Outputs the current active class names (text + audio) to the dumpout outlet as `classnames <name1> <name2> ...`.
-
----
-
-### Messages (inlet 2)
-
-#### `record <label> <buffer_name>`
-
-Register an audio example for a class. The object reads the named `buffer~`, resamples it to 48 kHz if needed, and encodes it as an audio embedding. On the next inference cycle, this embedding replaces the text embedding for `<label>` (or adds a new class if the label is not in the current text class set).
-
-```
-; example — in a message box connected to inlet 2
-record kick my_kick_buffer
-```
-
-- The buffer can be any sample rate and any length (only channel 0 is used).
-- Multiple `record` calls with the same label overwrite the previous example.
-- Audio-only use is supported: you can skip `set_classes` entirely and register all classes via `record`.
-
-#### `clear_example <label>`
-
-Remove the audio example for a single label. The class reverts to its text embedding if one was set via `set_classes`.
-
-#### `clear_examples`
-
+**`clear_examples`**
 Remove all registered audio examples.
 
 ---
 
-## Workflow
+## Workflows
 
-### Zero-shot (text only)
-
+**Zero-shot (text only)**
 ```
-1. [clap~ /path/to/clap_tilde.ts]
-2. Send: set_classes dog bark cat meow rain thunder
-3. Connect audio to inlet 1 — classification starts automatically.
-```
-
-### Few-shot (audio examples)
-
-```
-1. [clap~ /path/to/model]
-2. Send to inlet 1: set_classes label1 label2
-3. Load audio into buffer~, then send to inlet 2: record label1 my_buffer
-4. Repeat for label2.
-5. Classification now uses audio prototypes instead of text descriptions.
+1. Load: [clap~ /path/to/model]
+2. Send: set_classes dog_bark cat_meow rain thunder
+3. Connect audio to inlet 1.
 ```
 
-### Audio-only (no text)
-
+**Few-shot (audio examples override text)**
 ```
-1. [clap~ /path/to/model]
-2. (skip set_classes)
+1. Load: [clap~ /path/to/model]
+2. Send to inlet 1: set_classes kick snare hihat
+3. Load audio into buffer~, then send to inlet 2: record kick my_kick_buffer
+4. Repeat for other labels.
+```
+
+**Audio-only (no text)**
+```
+1. Load: [clap~ /path/to/model]
+2. Skip set_classes entirely.
 3. Send to inlet 2: record label1 buf1
 4. Send to inlet 2: record label2 buf2
-5. Inference runs using only audio prototypes.
 ```
-
----
-
-## Architecture
-
-```
-Audio inlet (signal)
-    │
-    ▼
-m_audio_fifo  (lock-free ring buffer)
-    │
-    ▼ (background inference thread)
-ClapClassifier::process()
-    ├── apply_pending_classes()   — encode new text labels via model
-    ├── apply_pending_audio()     — encode new buffer~ examples via model
-    ├── build_combined()          — merge text + audio prototypes into [N, 512] matrix
-    ├── EnergyThreshold           — gate: skip silent frames
-    └── IClapModel::classify()    — audio embedding → cosine similarity → softmax
-            │
-            ▼
-    m_event_fifo  (lock-free ring buffer)
-            │
-            ▼ (Max scheduler thread, via timer)
-    deliverer → outlets
-```
-
-**IClapModel** is an abstract interface with two concrete backends:
-
-| Backend | File | Notes |
-|---|---|---|
-| TorchScript | `src/clap_model.h` | Mel preprocessing in Python (baked into the `.ts`). CPU only. |
-| ONNX | `src/clap_model_onnx.h` | Mel preprocessing in C++ (LibTorch). Supports CoreML EP (MPS). |
-
-Model export scripts are in `scripts/`.
 
 ---
 
 ## Known limitations
 
-- macOS arm64 only (no Intel, no Windows, no Linux).
-- TorchScript backend does not support MPS (torch.stft is CPU-only).
-- No multi-channel input — only channel 0 is used.
-- Audio examples use a single embedding per label (last `record` call wins); no averaging across multiple examples yet.
-- Experimental software — no guarantee of stability across Max versions or macOS updates.
+- macOS arm64 only.
+- Single audio channel — only channel 0 is used.
+- One audio example per label — last `record` call wins, no averaging.
