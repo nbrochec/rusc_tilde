@@ -1,5 +1,4 @@
 #include "c74_min.h"
-#include <torch/script.h>
 #include <chrono>
 #include <dirent.h>
 #include <pthread.h>
@@ -8,7 +7,6 @@
 #include <sys/stat.h>
 
 #include "clap_classifier.h"
-#include "clap_model.h"
 #include "clap_model_onnx.h"
 #include "leaky_integrator.h"
 #include "utility.h"
@@ -106,35 +104,16 @@ public:
     explicit clap_tilde(const atoms& args = {}) {
         try {
             auto paths = parse_paths(args);
-            cout << "[clap~] format: " << (paths.is_onnx ? "ONNX" : "TorchScript") << endl;
+            bool use_coreml = parse_use_coreml(args);
             cout << "[clap~] model: " << paths.model_path << endl;
+            cout << "[clap~] ONNX backend" << (use_coreml ? " — CoreML EP (MPS)" : " — CPU") << endl;
 
-            std::function<std::unique_ptr<IClapModel>()> factory;
-
-            auto device = parse_device_type(args);
-
-            if (paths.is_onnx) {
-                bool use_coreml = (device == torch::kMPS);
-                cout << "[clap~] ONNX backend"
-                     << (use_coreml ? " — CoreML EP (MPS)" : " — CPU") << endl;
-                factory = [p = paths, use_coreml]() {
+            m_classifier = std::make_unique<ClapClassifier>(
+                [p = paths, use_coreml]() {
                     return std::make_unique<ClapModelONNX>(
                         p.model_path, p.text_onnx_path, p.meta_json_path,
                         p.tokenizer_dir, use_coreml);
-                };
-            } else {
-                if (device == torch::kMPS) {
-                    cwarn << "[clap~] MPS is not supported for TorchScript "
-                             "(torch.stft is CPU-only). Falling back to CPU. "
-                             "Use an .onnx model with 'mps' for Metal acceleration." << endl;
-                }
-                auto ts_device = (device == torch::kMPS) ? torch::kCPU : device;
-                factory = [p = paths, ts_device]() {
-                    return std::make_unique<ClapModel>(p.model_path, p.tokenizer_dir, ts_device);
-                };
-            }
-
-            m_classifier = std::make_unique<ClapClassifier>(std::move(factory));
+                });
             cout << "[clap~] classifier created, loading model on background thread..." << endl;
         } catch (std::exception& e) {
             error(e.what());
@@ -520,73 +499,50 @@ private:
 
 
     struct ModelPaths {
-        bool        is_onnx = false;
-        std::string model_path;     // .ts or audio .onnx
+        std::string model_path;
         std::string tokenizer_dir;
-        std::string text_onnx_path; // ONNX only
-        std::string meta_json_path; // ONNX only
+        std::string text_onnx_path;
+        std::string meta_json_path;
     };
 
-    // Accepts either:
-    //   - path to clap_tilde_<N>ms.ts  or directory containing it  (TorchScript)
-    //   - path to clap_tilde_audio_<N>ms.onnx                      (ONNX)
-    //   - path to directory containing clap_tilde_audio_*.onnx     (ONNX)
+    // Accepts:
+    //   - path to clap_tilde_audio_<N>ms.onnx
+    //   - path to a directory containing clap_tilde_audio_*.onnx
     static ModelPaths parse_paths(const atoms& args) {
         if (args.empty()) throw std::runtime_error("Missing argument: model path or directory");
         if (args[0].type() != c74::min::message_type::symbol_argument)
             throw std::runtime_error("first argument must be a path");
 
         auto raw = std::string(args[0]);
-
-        std::string resolved;
-        if (!raw.empty() && raw[0] == '/')
-            resolved = raw;
-        else
-            resolved = static_cast<std::string>(c74::min::path(raw));
+        std::string resolved = (!raw.empty() && raw[0] == '/')
+            ? raw : static_cast<std::string>(c74::min::path(raw));
 
         ModelPaths p;
-
         if (path_is_dir(resolved)) {
-            // Try ONNX first (look for audio_*.onnx), then fall back to .ts
-            auto audio_onnx = find_audio_onnx_in_dir(resolved);
-            if (!audio_onnx.empty()) {
-                p.is_onnx       = true;
-                p.model_path    = audio_onnx;
-                p.tokenizer_dir = resolved;
-                p.text_onnx_path = path_join(resolved, "clap_tilde_text.onnx");
-                p.meta_json_path = path_join(resolved, "clap_tilde_meta.json");
-            } else {
-                p.model_path    = path_join(resolved, "clap_tilde.ts");
-                p.tokenizer_dir = resolved;
-            }
+            p.model_path    = find_audio_onnx_in_dir(resolved);
+            p.tokenizer_dir = resolved;
+            if (p.model_path.empty())
+                throw std::runtime_error("No clap_tilde_audio_*.onnx found in: " + resolved);
         } else {
-            auto ext = path_extension(resolved);
-            if (ext == ".onnx") {
-                p.is_onnx       = true;
-                p.model_path    = resolved;
-                p.tokenizer_dir = path_parent(resolved);
-                p.text_onnx_path = path_join(p.tokenizer_dir, "clap_tilde_text.onnx");
-                p.meta_json_path = path_join(p.tokenizer_dir, "clap_tilde_meta.json");
-            } else {
-                p.model_path    = (ext != ".ts") ? resolved + ".ts" : resolved;
-                p.tokenizer_dir = path_parent(p.model_path);
-            }
+            if (path_extension(resolved) != ".onnx")
+                throw std::runtime_error("Expected an .onnx file, got: " + resolved);
+            p.model_path    = resolved;
+            p.tokenizer_dir = path_parent(resolved);
         }
 
-        // Common validation
+        p.text_onnx_path = path_join(p.tokenizer_dir, "clap_tilde_text.onnx");
+        p.meta_json_path = path_join(p.tokenizer_dir, "clap_tilde_meta.json");
+
         if (!path_exists(p.model_path))
-            throw std::runtime_error("Model file not found: " + p.model_path);
+            throw std::runtime_error("Audio ONNX not found: " + p.model_path);
+        if (!path_exists(p.text_onnx_path))
+            throw std::runtime_error("Text ONNX not found: " + p.text_onnx_path);
+        if (!path_exists(p.meta_json_path))
+            throw std::runtime_error("Meta JSON not found: " + p.meta_json_path);
         if (!path_exists(path_join(p.tokenizer_dir, "vocab.json")))
             throw std::runtime_error("vocab.json not found in: " + p.tokenizer_dir);
         if (!path_exists(path_join(p.tokenizer_dir, "merges.txt")))
             throw std::runtime_error("merges.txt not found in: " + p.tokenizer_dir);
-
-        if (p.is_onnx) {
-            if (!path_exists(p.text_onnx_path))
-                throw std::runtime_error("Text ONNX not found: " + p.text_onnx_path);
-            if (!path_exists(p.meta_json_path))
-                throw std::runtime_error("Meta JSON not found: " + p.meta_json_path);
-        }
 
         return p;
     }
@@ -614,17 +570,17 @@ private:
     }
 
 
-    torch::DeviceType parse_device_type(const atoms& args) {
-        if (args.size() < 2) return torch::kCPU;
+    static bool parse_use_coreml(const atoms& args) {
+        if (args.size() < 2) return false;
         if (args[1].type() == c74::min::message_type::symbol_argument) {
             auto s = std::string(args[1]);
             std::transform(s.begin(), s.end(), s.begin(),
                            [](unsigned char c) { return std::toupper(c); });
-            if (s == "MPS") return torch::kMPS;
-            if (s == "CPU") return torch::kCPU;
-            cwarn << "unknown device \"" << s << "\", defaulting to CPU" << endl;
+            if (s == "MPS") return true;
+            if (s == "CPU") return false;
+            std::cerr << "[clap~] unknown device \"" << s << "\", defaulting to CPU" << std::endl;
         }
-        return torch::kCPU;
+        return false;
     }
 
 
