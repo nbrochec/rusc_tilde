@@ -47,12 +47,11 @@ public:
         // Parse metadata
         auto meta = read_file(meta_json_path);
         m_sample_rate     = parse_int  (meta, "sr");
-        m_segment_length  = parse_int  (meta, "seglen");
-        m_nb_max_frames   = parse_int  (meta, "nb_max_frames");
         m_n_fft           = parse_int  (meta, "n_fft");
         m_hop_length      = parse_int  (meta, "hop_length");
         m_max_text_length = parse_int  (meta, "max_text_length");
         m_logit_scale_a   = parse_float(meta, "logit_scale_a");
+        m_context_ms      = parse_int  (meta, "default_context_ms");
 
         // Load mel filterbank [513, 64] from binary sidecar
         auto mel_path = meta_json_path.substr(0, meta_json_path.rfind('/') + 1)
@@ -90,11 +89,19 @@ public:
     }
 
 
+    void set_context_ms(int ms) override { m_context_ms = std::max(100, ms); }
+
+    int get_sample_rate()    const override { return m_sample_rate; }
+    int get_segment_length() const override {
+        return static_cast<int>(std::round(m_context_ms * m_sample_rate / 1000.0));
+    }
+
     // Run audio encoder only → [1, 512] normalised embedding on CPU.
     at::Tensor encode_audio(std::vector<float> audio) override {
-        auto feats = waveform_to_features(audio);   // [1, 4, nb_max_frames, 64]
+        const int64_t nf = compute_nb_frames();
+        auto feats = waveform_to_features(audio, nf);
 
-        const std::vector<int64_t> feat_shape = {1, 4, m_nb_max_frames, 64};
+        const std::vector<int64_t> feat_shape = {1, 4, nf, 64};
         auto feat_ptr = feats.data_ptr<float>();
 
         auto audio_val = Ort::Value::CreateTensor<float>(
@@ -142,11 +149,11 @@ public:
     // Run audio inference with pre-computed text embeddings.
     ClassificationResult classify(std::vector<float> audio,
                                   const at::Tensor& text_embs) override {
-        // ── Mel preprocessing (C++ LibTorch, matches export_clap.py exactly) ──
-        auto feats = waveform_to_features(audio);   // [1, 4, nb_max_frames, 64]
+        const int64_t nf = compute_nb_frames();
+        auto feats = waveform_to_features(audio, nf);
 
         // ── ONNX audio encoder ────────────────────────────────────────────────
-        const std::vector<int64_t> feat_shape = {1, 4, m_nb_max_frames, 64};
+        const std::vector<int64_t> feat_shape = {1, 4, nf, 64};
         auto feat_ptr = feats.data_ptr<float>();
 
         auto audio_val = Ort::Value::CreateTensor<float>(
@@ -181,24 +188,26 @@ public:
     }
 
 
-    int get_sample_rate()    const override { return m_sample_rate; }
-    int get_segment_length() const override { return m_segment_length; }
-
-
 private:
+    int64_t compute_nb_frames() const {
+        return get_segment_length() / m_hop_length + 1;
+    }
+
     // Compute CLAP mel features from raw float32 audio (at model sample rate).
-    // Matches ClapTorchScriptWrapper._waveform_to_features() in export_clap.py.
-    at::Tensor waveform_to_features(const std::vector<float>& audio) {
+    // nb_frames: exact time-axis size the caller will pass to ORT — audio is
+    // padded / trimmed to produce exactly that many frames.
+    at::Tensor waveform_to_features(const std::vector<float>& audio, int64_t nb_frames) {
+        const int64_t seg = get_segment_length();
         auto wav = torch::from_blob(
             const_cast<float*>(audio.data()),
             {static_cast<long>(audio.size())}, torch::kFloat32).clone();
 
-        // Pad / trim to segment_length
+        // Pad / trim to segment_length samples
         auto n = wav.size(0);
-        if (n < m_segment_length)
-            wav = at::pad(wav, {0, m_segment_length - n});
-        else if (n > m_segment_length)
-            wav = wav.slice(0, 0, m_segment_length);
+        if (n < seg)
+            wav = at::pad(wav, {0, seg - n});
+        else if (n > seg)
+            wav = wav.slice(0, 0, seg);
 
         // Center padding (reflect) — matches torch.stft(center=True)
         auto pad = m_n_fft / 2;
@@ -211,28 +220,23 @@ private:
             /*onesided=*/true, /*return_complex=*/true);
 
         // Power spectrum [513, T]
-        auto stft_r = torch::view_as_real(stft_c);                     // [513, T, 2]
-        auto power  = stft_r.select(-1, 0).pow(2)
-                    + stft_r.select(-1, 1).pow(2);                     // [513, T]
+        auto stft_r = torch::view_as_real(stft_c);
+        auto power  = stft_r.select(-1, 0).pow(2) + stft_r.select(-1, 1).pow(2);
 
         // Mel filterbank + log10 dB  [64, T]
-        auto mel     = torch::mm(m_mel_filters.t(), power);            // [64, T]
-        auto log_mel = 10.0f * torch::log10(
-            torch::clamp(mel, /*min=*/1e-10f));                        // [64, T]
+        auto mel     = torch::mm(m_mel_filters.t(), power);
+        auto log_mel = 10.0f * torch::log10(torch::clamp(mel, /*min=*/1e-10f));
 
-        // Trim / pad time axis to nb_max_frames
-        log_mel = log_mel.t();                                         // [T, 64]
+        // Trim / pad time axis to nb_frames
+        log_mel = log_mel.t();
         auto T = log_mel.size(0);
-        if (T > m_nb_max_frames)
-            log_mel = log_mel.slice(0, 0, m_nb_max_frames);
-        else if (T < m_nb_max_frames)
-            log_mel = at::pad(log_mel, {0, 0, 0, m_nb_max_frames - T});
+        if (T > nb_frames)
+            log_mel = log_mel.slice(0, 0, nb_frames);
+        else if (T < nb_frames)
+            log_mel = at::pad(log_mel, {0, 0, 0, nb_frames - T});
 
-        // CLAP "fusion" format: tile 4×  →  [1, 4, nb_max_frames, 64]
-        return log_mel.unsqueeze(0)
-                      .expand({4, -1, -1})
-                      .unsqueeze(0)
-                      .contiguous();
+        // CLAP "fusion" format: tile 4×  →  [1, 4, nb_frames, 64]
+        return log_mel.unsqueeze(0).expand({4, -1, -1}).unsqueeze(0).contiguous();
     }
 
 
@@ -280,8 +284,7 @@ private:
     at::Tensor m_hann_window;   // [n_fft]
 
     int   m_sample_rate;
-    int   m_segment_length;
-    int   m_nb_max_frames;
+    int   m_context_ms;
     int   m_n_fft;
     int   m_hop_length;
     int   m_max_text_length;

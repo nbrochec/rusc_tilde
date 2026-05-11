@@ -259,6 +259,25 @@ public:
         }}
     };
 
+    attribute<int> context{this, "context", 1000,
+        title {"Context Length"},
+        description {"Audio context window for inference in milliseconds. "
+                     "Longer windows capture more temporal structure but increase latency. "
+                     "Re-exports the model are not required — context is set at runtime."},
+        setter{MIN_FUNCTION {
+            if (args.size() == 1
+                && (args[0].type() == c74::min::message_type::int_argument
+                    || args[0].type() == c74::min::message_type::float_argument))
+            {
+                int ms = std::max(100, static_cast<int>(args[0]));
+                if (m_classifier) m_classifier->set_context_ms(ms);
+                return {ms};
+            }
+            cerr << "bad argument for message \"context\"" << endl;
+            return context;
+        }}
+    };
+
     attribute<double> confidence{this, "confidence", 0.0,
         Docs::CONFIDENCE_TITLE, Docs::CONFIDENCE_DESCRIPTION,
         setter{MIN_FUNCTION {
@@ -553,7 +572,7 @@ private:
         if (!d) return {};
         std::string result;
         struct dirent* entry;
-        const std::string prefix = "clap_tilde_audio_";
+        const std::string prefix = "clap_tilde_audio";
         const std::string suffix = ".onnx";
         while ((entry = readdir(d)) != nullptr) {
             std::string name = entry->d_name;

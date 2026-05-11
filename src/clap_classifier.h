@@ -2,7 +2,6 @@
 #ifndef CLAP_TILDE_CLAP_CLASSIFIER_H
 #define CLAP_TILDE_CLAP_CLASSIFIER_H
 
-#include <torch/script.h>
 #include <torch/torch.h>
 #include <functional>
 #include <map>
@@ -40,15 +39,28 @@ public:
         assert(m_model);
         std::lock_guard<std::mutex> lock{m_mutex};
 
-        m_input_sr = sr;
-        m_threshold_buffer = std::make_unique<CircularBuffer<double>>(m_threshold_window_ms, sr);
+        m_input_sr            = sr;
+        m_input_vector_length = static_cast<std::size_t>(input_vector_length);
+        m_threshold_buffer    = std::make_unique<CircularBuffer<double>>(m_threshold_window_ms, sr);
         m_classification_buffer = std::make_unique<ResamplingBuffer>(
             static_cast<std::size_t>(m_model->get_segment_length()),
-            static_cast<std::size_t>(input_vector_length),
+            *m_input_vector_length,
             sr,
             m_model->get_sample_rate());
 
         m_initialized = is_initialized();
+    }
+
+    void set_context_ms(int ms) {
+        std::lock_guard<std::mutex> lock{m_mutex};
+        if (m_model) m_model->set_context_ms(ms);
+        if (m_classification_buffer && m_input_sr && m_input_vector_length) {
+            m_classification_buffer = std::make_unique<ResamplingBuffer>(
+                static_cast<std::size_t>(m_model->get_segment_length()),
+                *m_input_vector_length,
+                *m_input_sr,
+                m_model->get_sample_rate());
+        }
     }
 
 
@@ -237,8 +249,9 @@ private:
     }
 
     std::function<std::unique_ptr<IClapModel>()> m_model_factory;
-    int                   m_threshold_window_ms;
-    std::optional<int>    m_input_sr;
+    int                         m_threshold_window_ms;
+    std::optional<int>          m_input_sr;
+    std::optional<std::size_t>  m_input_vector_length;
 
     EnergyThreshold       m_energy_threshold;
     bool                  m_initialized = false;

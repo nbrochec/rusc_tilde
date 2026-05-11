@@ -17,8 +17,9 @@ struct IClapModel {
     virtual at::Tensor encode_audio(std::vector<float> audio) = 0;
     virtual ClassificationResult classify(std::vector<float> audio,
                                           const at::Tensor& text_embs) = 0;
-    virtual int get_sample_rate()    const = 0;
-    virtual int get_segment_length() const = 0;
+    virtual int  get_sample_rate()    const = 0;
+    virtual int  get_segment_length() const = 0;   // samples at model sr for current context
+    virtual void set_context_ms(int ms) = 0;
 };
 
 #endif //CLAP_TILDE_CLAP_MODEL_H
