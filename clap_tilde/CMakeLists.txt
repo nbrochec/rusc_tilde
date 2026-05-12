@@ -29,13 +29,6 @@ set_target_properties(${PROJECT_NAME}
 add_custom_command(
         TARGET ${PROJECT_NAME}
         POST_BUILD
-        COMMAND cp "${TORCH_INSTALL_PREFIX}/lib/*.dylib"
-                   "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/${${PROJECT_NAME}_EXTERN_OUTPUT_NAME}.mxo/Contents/MacOS/"
-)
-
-add_custom_command(
-        TARGET ${PROJECT_NAME}
-        POST_BUILD
         COMMAND cp "${ORT_LIB}"
                    "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/${${PROJECT_NAME}_EXTERN_OUTPUT_NAME}.mxo/Contents/MacOS/"
 )

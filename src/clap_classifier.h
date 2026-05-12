@@ -2,7 +2,6 @@
 #ifndef CLAP_TILDE_CLAP_CLASSIFIER_H
 #define CLAP_TILDE_CLAP_CLASSIFIER_H
 
-#include <torch/torch.h>
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -25,8 +24,8 @@ public:
                             , double energy_threshold_db = EnergyThreshold::MINIMUM_THRESHOLD
                             , int threshold_window_ms = DEFAULT_THRESHOLD_WINDOW_MS)
             : m_model_factory(std::move(model_factory))
-            , m_energy_threshold(energy_threshold_db)
-            , m_threshold_window_ms(threshold_window_ms) {}
+            , m_threshold_window_ms(threshold_window_ms)
+            , m_energy_threshold(energy_threshold_db) {}
 
 
     void initialize_model() {
@@ -79,14 +78,11 @@ public:
         m_classes_additive = true;
     }
 
-    // Queue an audio example to be encoded on the inference thread.
-    // audio_samples should be at the model's native sample rate (48 kHz).
     void queue_audio_example(const std::string& label, std::vector<float> audio_samples) {
         std::lock_guard<std::mutex> lock{m_class_mutex};
         m_pending_audio.push_back({label, std::move(audio_samples)});
     }
 
-    // Clear all recorded audio examples (or just one label if specified).
     void clear_audio_examples(const std::string& label = "") {
         std::lock_guard<std::mutex> lock{m_class_mutex};
         if (label.empty()) {
@@ -105,9 +101,10 @@ public:
         apply_pending_classes();
         apply_pending_audio();
 
-        // Build combined embedding: text classes + audio examples
         auto [combined_embs, combined_names] = build_combined();
-        if (combined_names.empty() || !combined_embs.defined()) return std::nullopt;
+        if (combined_names.empty() || combined_embs.empty()) return std::nullopt;
+
+        int num_classes = static_cast<int>(combined_names.size());
 
         m_threshold_buffer->add_samples(input);
         m_classification_buffer->add_samples(input);
@@ -117,7 +114,7 @@ public:
         if (m_active) {
             auto samples = m_classification_buffer->get_samples();
             if (m_energy_threshold.is_above_threshold(samples)) {
-                auto result = m_model->classify(util::to_floats(samples), combined_embs);
+                auto result = m_model->classify(util::to_floats(samples), combined_embs, num_classes);
                 result.class_names = combined_names;
                 return result;
             } else {
@@ -127,7 +124,7 @@ public:
             if (m_energy_threshold.is_above_threshold(m_threshold_buffer->samples_unordered())) {
                 m_active = true;
                 auto samples = m_classification_buffer->get_samples();
-                auto result = m_model->classify(util::to_floats(samples), combined_embs);
+                auto result = m_model->classify(util::to_floats(samples), combined_embs, num_classes);
                 result.class_names = combined_names;
                 return result;
             }
@@ -158,7 +155,6 @@ public:
         return m_model ? m_model->get_segment_length() : 0;
     }
 
-    // Returns the combined class names (text + audio examples) as of last inference cycle.
     std::vector<std::string> get_class_names() {
         std::lock_guard<std::mutex> lock{m_mutex};
         return m_cached_combined_names;
@@ -170,7 +166,6 @@ private:
         return m_model && m_classification_buffer && m_threshold_buffer && m_input_sr.has_value();
     }
 
-    // Must be called with m_mutex held.
     void apply_pending_classes() {
         bool pending = false;
         std::vector<std::string> names;
@@ -186,7 +181,6 @@ private:
         }
         if (pending && m_model) {
             if (additive) {
-                // Append only names not already present
                 for (const auto& n : names) {
                     if (std::find(m_text_class_names.begin(), m_text_class_names.end(), n)
                             == m_text_class_names.end())
@@ -200,7 +194,6 @@ private:
         }
     }
 
-    // Must be called with m_mutex held. Encodes queued audio examples.
     void apply_pending_audio() {
         std::vector<PendingAudio> pending;
         bool clear_all = false;
@@ -227,46 +220,43 @@ private:
 
         if (!m_model) return;
         for (auto& p : pending) {
-            auto emb = m_model->encode_audio(std::move(p.audio));
-            if (emb.defined() && emb.numel() > 0)
-                m_audio_examples[p.label] = emb;   // overwrite — last example wins per label
+            auto emb = m_model->encode_audio(std::move(p.audio));  // [512]
+            if (!emb.empty())
+                m_audio_examples[p.label] = std::move(emb);
         }
     }
 
-    // Build combined embeddings. Audio examples replace text embeddings for the
-    // same label; audio-only labels (no matching text class) are appended.
-    // Works with no text classes if audio examples cover all labels.
-    std::pair<at::Tensor, std::vector<std::string>> build_combined() {
+    // Returns {combined_embs [M*512], names [M]}
+    std::pair<std::vector<float>, std::vector<std::string>> build_combined() {
         std::vector<std::string> names;
-        std::vector<at::Tensor> parts;
+        std::vector<float> combined;
 
-        // Text classes: use audio embedding if one was recorded, else text embedding.
+        // Text classes: use audio embedding if recorded, else text embedding
         for (int i = 0; i < static_cast<int>(m_text_class_names.size()); ++i) {
-            const auto& name = m_text_class_names[i];
+            const auto& name = m_text_class_names[static_cast<std::size_t>(i)];
             names.push_back(name);
             auto it = m_audio_examples.find(name);
-            if (it != m_audio_examples.end())
-                parts.push_back(it->second);                          // audio overrides text
-            else
-                parts.push_back(m_text_embeddings[i].unsqueeze(0));  // text row → [1, 512]
+            if (it != m_audio_examples.end()) {
+                combined.insert(combined.end(), it->second.begin(), it->second.end());
+            } else {
+                auto base = static_cast<std::size_t>(i * 512);
+                combined.insert(combined.end(),
+                    m_text_embeddings.begin() + static_cast<std::ptrdiff_t>(base),
+                    m_text_embeddings.begin() + static_cast<std::ptrdiff_t>(base + 512));
+            }
         }
 
-        // Audio-only labels (label not present in text classes).
+        // Audio-only labels not present in text classes
         for (const auto& [label, emb] : m_audio_examples) {
             if (std::find(m_text_class_names.begin(), m_text_class_names.end(), label)
                     == m_text_class_names.end()) {
                 names.push_back(label);
-                parts.push_back(emb);
+                combined.insert(combined.end(), emb.begin(), emb.end());
             }
         }
 
-        if (parts.empty()) {
-            m_cached_combined_names = {};
-            return {{}, {}};
-        }
-
         m_cached_combined_names = names;
-        return {torch::cat(parts, 0), std::move(names)};
+        return {std::move(combined), std::move(names)};
     }
 
     std::function<std::unique_ptr<IClapModel>()> m_model_factory;
@@ -282,10 +272,10 @@ private:
     std::unique_ptr<ResamplingBuffer>         m_classification_buffer;
     std::unique_ptr<CircularBuffer<double>>   m_threshold_buffer;
 
-    at::Tensor               m_text_embeddings;
-    std::vector<std::string> m_text_class_names;
-    std::map<std::string, at::Tensor> m_audio_examples;   // label → [1, 512]
-    std::vector<std::string> m_cached_combined_names;
+    std::vector<float>                        m_text_embeddings;   // [N * 512] row-major
+    std::vector<std::string>                  m_text_class_names;
+    std::map<std::string, std::vector<float>> m_audio_examples;    // label → [512]
+    std::vector<std::string>                  m_cached_combined_names;
 
     std::mutex               m_class_mutex;
     std::vector<std::string> m_pending_classes;

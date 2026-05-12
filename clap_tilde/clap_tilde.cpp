@@ -6,6 +6,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 
+#include "CDSPResampler.h"
 #include "clap_classifier.h"
 #include "clap_model_onnx.h"
 #include "leaky_integrator.h"
@@ -93,11 +94,12 @@ public:
     outlet<> outlet_distribution{this, "(list) class probability distribution"};
     outlet<> dumpout            {this, "(any) dumpout"};
 
-    // First arg: path to clap_tilde.ts (or the directory containing it + vocab.json + merges.txt)
+    // First arg (optional): path to clap_tilde_audio_*.onnx, or the directory containing all model files.
+    //   If omitted, the model is auto-detected via Max's search path (place model files in
+    //   the package's media/ folder or add their directory to Max's search path).
     // Second arg (optional): device — "cpu" or "mps"  (default: cpu)
     argument<symbol> model_arg {this, "model",
-        "Path to clap_tilde.ts, or the directory containing it. "
-        "vocab.json and merges.txt must be in the same directory."};
+        "Path to model directory or clap_tilde_audio_*.onnx. Optional — auto-detected if omitted."};
     argument<symbol> device_arg{this, "device",
         "Inference device: 'cpu' or 'mps'. Optional, defaults to 'cpu'."};
 
@@ -416,20 +418,17 @@ public:
                     raw[static_cast<std::size_t>(f)] =
                         static_cast<float>(lock[static_cast<size_t>(f * channels)]);
 
-                // Linear resample to 48 kHz if needed
+                // Resample to 48 kHz if needed (r8brain high-quality resampler)
                 std::vector<float> samples;
                 constexpr int MODEL_SR = 48000;
                 if (static_cast<int>(buf_sr) != MODEL_SR && buf_sr > 0) {
-                    int target = static_cast<int>(std::round(frames * MODEL_SR / buf_sr));
-                    auto wav   = torch::from_blob(raw.data(), {1, 1, frames}, torch::kFloat32).clone();
-                    wav = torch::nn::functional::interpolate(
-                        wav,
-                        torch::nn::functional::InterpolateFuncOptions()
-                            .size(std::vector<int64_t>{target})
-                            .mode(torch::kLinear)
-                            .align_corners(false));
-                    auto ptr = wav.data_ptr<float>();
-                    samples.assign(ptr, ptr + wav.numel());
+                    std::vector<double> src_d(raw.begin(), raw.end());
+                    r8b::CDSPResampler24 rs(buf_sr, MODEL_SR, frames);
+                    double* dst_ptr = nullptr;
+                    int got = rs.process(src_d.data(), frames, dst_ptr);
+                    samples.resize(static_cast<std::size_t>(got));
+                    for (int i = 0; i < got; ++i)
+                        samples[static_cast<std::size_t>(i)] = static_cast<float>(dst_ptr[i]);
                 } else {
                     samples = std::move(raw);
                 }
@@ -555,12 +554,17 @@ private:
     };
 
     // Accepts:
+    //   - no args           → auto-detect via Max's search path
     //   - path to clap_tilde_audio_<N>ms.onnx
     //   - path to a directory containing clap_tilde_audio_*.onnx
     static ModelPaths parse_paths(const atoms& args) {
-        if (args.empty()) throw std::runtime_error("Missing argument: model path or directory");
-        if (args[0].type() != c74::min::message_type::symbol_argument)
-            throw std::runtime_error("first argument must be a path");
+        // Auto-detect: no argument provided or first arg is a device string
+        bool no_path_arg = args.empty()
+            || args[0].type() != c74::min::message_type::symbol_argument
+            || is_device_string(std::string(args[0]));
+
+        if (no_path_arg)
+            return auto_detect_paths();
 
         auto raw = std::string(args[0]);
         std::string resolved = (!raw.empty() && raw[0] == '/')
@@ -574,13 +578,42 @@ private:
                 throw std::runtime_error("No clap_tilde_audio_*.onnx found in: " + resolved);
         } else {
             if (path_extension(resolved) != ".onnx")
-                throw std::runtime_error("Expected an .onnx file, got: " + resolved);
+                throw std::runtime_error("Expected an .onnx file or directory, got: " + resolved);
             p.model_path    = resolved;
             p.tokenizer_dir = path_parent(resolved);
         }
 
+        return validate_paths(p);
+    }
+
+    // Auto-detect model files via Max's search path.
+    // Place model files in the package's media/ folder or add their directory to Max's search path.
+    static ModelPaths auto_detect_paths() {
+        c74::min::path meta_search{"clap_tilde_meta.json"};
+        auto meta_native = static_cast<std::string>(meta_search);
+        if (meta_native.empty() || !path_exists(meta_native))
+            throw std::runtime_error(
+                "[clap~] Model not found via auto-detect. "
+                "Pass the model directory as an argument, or place model files in Max's search path.");
+
+        ModelPaths p;
+        p.meta_json_path = meta_native;
+        p.tokenizer_dir  = path_parent(meta_native);
+        p.model_path     = find_audio_onnx_in_dir(p.tokenizer_dir);
+        if (p.model_path.empty())
+            throw std::runtime_error(
+                "[clap~] clap_tilde_meta.json found but no clap_tilde_audio_*.onnx in: "
+                + p.tokenizer_dir);
         p.text_onnx_path = path_join(p.tokenizer_dir, "clap_tilde_text.onnx");
-        p.meta_json_path = path_join(p.tokenizer_dir, "clap_tilde_meta.json");
+
+        return validate_paths(p);
+    }
+
+    static ModelPaths validate_paths(ModelPaths p) {
+        if (p.text_onnx_path.empty())
+            p.text_onnx_path = path_join(p.tokenizer_dir, "clap_tilde_text.onnx");
+        if (p.meta_json_path.empty())
+            p.meta_json_path = path_join(p.tokenizer_dir, "clap_tilde_meta.json");
 
         if (!path_exists(p.model_path))
             throw std::runtime_error("Audio ONNX not found: " + p.model_path);
@@ -619,15 +652,26 @@ private:
     }
 
 
+    static bool is_device_string(const std::string& s) {
+        auto u = s;
+        std::transform(u.begin(), u.end(), u.begin(),
+                       [](unsigned char c) { return std::toupper(c); });
+        return u == "CPU" || u == "MPS";
+    }
+
     static bool parse_use_coreml(const atoms& args) {
-        if (args.size() < 2) return false;
-        if (args[1].type() == c74::min::message_type::symbol_argument) {
-            auto s = std::string(args[1]);
-            std::transform(s.begin(), s.end(), s.begin(),
-                           [](unsigned char c) { return std::toupper(c); });
-            if (s == "MPS") return true;
-            if (s == "CPU") return false;
-            std::cerr << "[clap~] unknown device \"" << s << "\", defaulting to CPU" << std::endl;
+        // Device arg may be at index 0 (if no model path) or index 1
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            if (args[i].type() == c74::min::message_type::symbol_argument) {
+                auto s = std::string(args[i]);
+                if (is_device_string(s)) {
+                    auto u = s;
+                    std::transform(u.begin(), u.end(), u.begin(),
+                                   [](unsigned char c) { return std::toupper(c); });
+                    if (u == "MPS") return true;
+                    if (u == "CPU") return false;
+                }
+            }
         }
         return false;
     }

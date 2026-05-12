@@ -5,7 +5,6 @@
 // RoBERTa byte-level BPE tokenizer (matches laion/clap-htsat-fused tokenizer).
 // Loads vocab.json and merges.txt exported by scripts/export_clap.py.
 
-#include <torch/torch.h>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -34,14 +33,14 @@ public:
     }
 
     // Tokenize a batch of strings.
-    // Returns (input_ids [N, max_length], attention_mask [N, max_length]) int64 tensors.
-    std::pair<at::Tensor, at::Tensor> encode(const std::vector<std::string>& texts) const {
+    // Returns (input_ids, attention_mask), each [N * max_length] int64 row-major.
+    std::pair<std::vector<int64_t>, std::vector<int64_t>>
+    encode(const std::vector<std::string>& texts) const {
         int N = static_cast<int>(texts.size());
-        auto ids_t   = torch::full({N, m_max_length}, m_pad_id, torch::kInt64);
-        auto mask_t  = torch::zeros({N, m_max_length}, torch::kInt64);
+        std::size_t total = static_cast<std::size_t>(N * m_max_length);
 
-        auto ids_acc  = ids_t.accessor<int64_t, 2>();
-        auto mask_acc = mask_t.accessor<int64_t, 2>();
+        std::vector<int64_t> input_ids (total, static_cast<int64_t>(m_pad_id));
+        std::vector<int64_t> attn_mask (total, 0LL);
 
         for (int i = 0; i < N; i++) {
             auto token_ids = encode_single(texts[i]);
@@ -50,18 +49,18 @@ public:
             std::vector<int> seq;
             seq.push_back(m_bos_id);
             int content_max = m_max_length - 2;
-            for (int j = 0; j < static_cast<int>(token_ids.size()) && j < content_max; j++) {
+            for (int j = 0; j < static_cast<int>(token_ids.size()) && j < content_max; j++)
                 seq.push_back(token_ids[j]);
-            }
             seq.push_back(m_eos_id);
 
+            auto base = static_cast<std::size_t>(i * m_max_length);
             for (int j = 0; j < static_cast<int>(seq.size()); j++) {
-                ids_acc[i][j]  = static_cast<int64_t>(seq[j]);
-                mask_acc[i][j] = 1LL;
+                input_ids[base + static_cast<std::size_t>(j)] = static_cast<int64_t>(seq[j]);
+                attn_mask[base + static_cast<std::size_t>(j)] = 1LL;
             }
         }
 
-        return {ids_t, mask_t};
+        return {std::move(input_ids), std::move(attn_mask)};
     }
 
 private:

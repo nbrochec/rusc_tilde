@@ -12,10 +12,18 @@ add_library(clap INTERFACE
 
 target_include_directories(clap INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${ORT_INCLUDE_DIR})
+        ${ORT_INCLUDE_DIR}
+        ${ESSENTIA_INCLUDE_DIR}
+        /opt/homebrew/include
+        /opt/homebrew/include/eigen3)
+
+find_library(YAML_LIB yaml HINTS /opt/homebrew/lib REQUIRED)
 
 target_link_libraries(clap
         INTERFACE
         r8brain
-        "${TORCH_LIBRARIES}"
-        "${ORT_LIB}")
+        "${ORT_LIB}"
+        "${ESSENTIA_LIB}"
+        "${FFTW3F_LIB}"
+        "${FFTW3_LIB}"
+        "${YAML_LIB}")
