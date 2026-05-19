@@ -11,6 +11,8 @@ add_library(${PROJECT_NAME} MODULE ${SOURCE_FILES})
 add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
     COMMAND ${CMAKE_COMMAND} -E remove_directory
             "${C74_LIBRARY_OUTPUT_DIRECTORY}/clap~.mxo"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${C74_LIBRARY_OUTPUT_DIRECTORY}/clap~.mxo/Contents/MacOS"
     COMMENT "Removing old clap~.mxo"
 )
 
