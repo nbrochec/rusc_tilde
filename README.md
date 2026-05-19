@@ -1,8 +1,8 @@
 # clap~
 
-> **Experimental.** Research prototype. Not production software.
+> **Experimental.** Research prototype. Not production software. Use at own risk.
 
-Real-time zero-shot (and few-shot) audio classification for Max/MSP using [laion/clap-htsat-fused](https://huggingface.co/laion/clap-htsat-fused).
+Real-time zero-shot and few-shot audio classification in Max/MSP using [laion/clap-htsat-fused](https://huggingface.co/laion/clap-htsat-fused).
 
 `clap~` listens to incoming audio, segments it into fixed-length windows, and classifies each window against a set of class prototypes using CLAP (Contrastive Language-Audio Pretraining). Class prototypes can be text descriptions, audio examples recorded from a `buffer~` or `polybuffer~`, or a mix of both.
 
@@ -95,10 +95,10 @@ For auto-detection to work, place all model files in your Max package's `media/`
 | `enabled` | 1 | Turn inference on/off without stopping DSP. |
 | `threshold` | −80 dB | Energy gate — audio below this level is ignored. |
 | `window` | 20 ms | Look-back window for the energy gate. |
-| `context` | 1000 ms | Audio context window fed to the model. Shorter = more reactive; longer = more temporal context. |
+| `context` | 500 ms | Audio context window fed to the model. Shorter = more reactive; longer = more temporal context. |
 | `confidence` | 0.0 | Minimum winning-class probability to output a result. Below this, all outlets are silent. |
 | `sensitivity` | 1.0 | Smoothing on the probability distribution over time. 0 = maximum smoothing, 1 = no smoothing. |
-| `sensitivityrange` | 2000 ms | Time constant range for the smoothing. Scales the effect of `sensitivity`. |
+| `sensitivityrange` | 1000 ms | Time constant range for the smoothing. Scales the effect of `sensitivity`. |
 | `verbose` | 0 | Print extra information to the Max console. |
 
 ---
