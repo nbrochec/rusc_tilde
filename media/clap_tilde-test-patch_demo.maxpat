@@ -10,9 +10,20 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 34.0, 106.0, 1592.0, 702.0 ],
+		"rect" : [ 34.0, 100.0, 1660.0, 983.0 ],
 		"gridsize" : [ 15.0, 15.0 ],
 		"boxes" : [ 			{
+				"box" : 				{
+					"id" : "obj-36",
+					"maxclass" : "newobj",
+					"numinlets" : 2,
+					"numoutlets" : 0,
+					"patching_rect" : [ 13.0, 303.0, 35.0, 22.0 ],
+					"text" : "dac~"
+				}
+
+			}
+, 			{
 				"box" : 				{
 					"id" : "obj-41",
 					"maxclass" : "comment",
@@ -84,18 +95,6 @@
 			}
 , 			{
 				"box" : 				{
-					"id" : "obj-63",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 1,
-					"outlettype" : [ "" ],
-					"patching_rect" : [ 739.0, 71.0, 54.0, 22.0 ],
-					"text" : "deferlow"
-				}
-
-			}
-, 			{
-				"box" : 				{
 					"id" : "obj-59",
 					"maxclass" : "message",
 					"numinlets" : 2,
@@ -115,18 +114,6 @@
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 831.0, 206.0, 615.0, 22.0 ],
 					"text" : "readfolder"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-53",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 1,
-					"outlettype" : [ "bang" ],
-					"patching_rect" : [ 739.0, 42.0, 58.0, 22.0 ],
-					"text" : "loadbang"
 				}
 
 			}
@@ -334,7 +321,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 136.0, 481.0, 50.0, 22.0 ],
-					"text" : "0"
+					"text" : "2"
 				}
 
 			}
@@ -535,7 +522,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 167.0, 535.0, 210.0, 50.0 ],
-					"text" : "aeolian"
+					"text" : "hithat"
 				}
 
 			}
@@ -1006,6 +993,23 @@
 				"patchline" : 				{
 					"destination" : [ "obj-1", 0 ],
 					"midpoints" : [ 74.5, 324.86328125, 176.5, 324.86328125 ],
+					"order" : 0,
+					"source" : [ "obj-37", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-36", 1 ],
+					"order" : 1,
+					"source" : [ "obj-37", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-36", 0 ],
+					"order" : 2,
 					"source" : [ "obj-37", 0 ]
 				}
 
@@ -1034,13 +1038,6 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-63", 0 ],
-					"source" : [ "obj-53", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
 					"destination" : [ "obj-25", 0 ],
 					"source" : [ "obj-56", 0 ]
 				}
@@ -1050,13 +1047,6 @@
 				"patchline" : 				{
 					"destination" : [ "obj-30", 0 ],
 					"source" : [ "obj-59", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-52", 0 ],
-					"source" : [ "obj-63", 0 ]
 				}
 
 			}
@@ -1075,20 +1065,24 @@
 
 			}
  ],
-		"originid" : "pat-18",
+		"originid" : "pat-13",
 		"dependency_cache" : [ 			{
 				"name" : "264-rainstick.aif",
 				"bootpath" : "~/Documents/Max 9/Packages/264-tools-0.18.0/help/soundfiles",
-				"patcherrelativepath" : "../../Documents/Max 9/Packages/264-tools-0.18.0/help/soundfiles",
+				"patcherrelativepath" : "../../../Documents/Max 9/Packages/264-tools-0.18.0/help/soundfiles",
 				"type" : "AIFF",
 				"implicit" : 1
 			}
 , 			{
 				"name" : "bassoonA3.wav",
 				"bootpath" : "~/Documents/Max 9/Packages/dada/media",
-				"patcherrelativepath" : "../../Documents/Max 9/Packages/dada/media",
+				"patcherrelativepath" : "../../../Documents/Max 9/Packages/dada/media",
 				"type" : "WAVE",
 				"implicit" : 1
+			}
+, 			{
+				"name" : "clap~.mxo",
+				"type" : "iLaX"
 			}
 , 			{
 				"name" : "drumLoop.aif",
