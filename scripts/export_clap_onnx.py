@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Export laion/clap-htsat-fused to ONNX for use with clap_tilde.
+Export laion/clap-htsat-fused to ONNX for use with rusc_tilde.
 
-Usage (from the clap_tilde project root):
+Usage (from the rusc_tilde project root):
     conda run -n clap python scripts/export_clap_onnx.py
     conda run -n clap python scripts/export_clap_onnx.py --default-context-ms 500
 
 Outputs in --output-dir (default: ./model):
-    clap_tilde_audio_<N>ms.onnx  — audio encoder (fixed frame count baked from context)
-    clap_tilde_text.onnx          — text encoder
-    clap_tilde_meta.json          — sr, default_context_ms, seglen, nb_max_frames, ...
-    clap_tilde_mel_filters.bin    — float32 [513 × 64] mel filterbank
+    rusc_tilde_audio_<N>ms.onnx  — audio encoder (fixed frame count baked from context)
+    rusc_tilde_text.onnx          — text encoder
+    rusc_tilde_meta.json          — sr, default_context_ms, seglen, nb_max_frames, ...
+    rusc_tilde_mel_filters.bin    — float32 [513 × 64] mel filterbank
     vocab.json                    — RoBERTa BPE vocabulary
     merges.txt                    — BPE merge rules
 
@@ -221,8 +221,8 @@ def main():
     ).to(device)
 
     # ── 4. Export ────────────────────────────────────────────────────────────
-    audio_onnx_path = output_dir / f"clap_tilde_audio_{args.default_context_ms}ms.onnx"
-    text_onnx_path  = output_dir / "clap_tilde_text.onnx"
+    audio_onnx_path = output_dir / f"rusc_tilde_audio_{args.default_context_ms}ms.onnx"
+    text_onnx_path  = output_dir / "rusc_tilde_text.onnx"
 
     print(f"Exporting audio encoder → {audio_onnx_path}")
     export_audio_encoder(audio_wrapper, device, audio_onnx_path, nb_max_frames)
@@ -241,13 +241,13 @@ def main():
         "max_text_length":    args.max_text_length,
         "logit_scale_a":      float(model.logit_scale_a.item()),
     }
-    meta_path = output_dir / "clap_tilde_meta.json"
+    meta_path = output_dir / "rusc_tilde_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2))
     print(f"Metadata sidecar        → {meta_path}")
 
     # ── 6. Save mel filterbank ───────────────────────────────────────────────
     import numpy as np
-    mel_path = output_dir / "clap_tilde_mel_filters.bin"
+    mel_path = output_dir / "rusc_tilde_mel_filters.bin"
     mel_np   = fe.mel_filters.copy().astype(np.float32)   # [513, 64] row-major
     mel_np.tofile(str(mel_path))
     print(f"Mel filters             → {mel_path}  ({mel_np.shape}, float32)")
@@ -269,9 +269,9 @@ def main():
     print(f"  {output_dir / 'merges.txt'}")
     print()
     print("Load in Max:")
-    print(f"  clap~                     (auto-detect via Max search path)")
-    print(f"  clap~ {output_dir}        (explicit directory)")
-    print(f"  clap~ {output_dir} mps    (CoreML / Apple Silicon)")
+    print(f"  rusc~                     (auto-detect via Max search path)")
+    print(f"  rusc~ {output_dir}        (explicit directory)")
+    print(f"  rusc~ {output_dir} mps    (CoreML / Apple Silicon)")
     print(f"Use @context <ms> to set shorter context at runtime (zero-padded to {nb_max_frames} frames).")
 
 

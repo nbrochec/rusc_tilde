@@ -1,7 +1,7 @@
 #ifndef CLAP_TILDE_CLAP_MODEL_ONNX_H
 #define CLAP_TILDE_CLAP_MODEL_ONNX_H
 
-// ONNX Runtime backend for clap_tilde.
+// ONNX Runtime backend for rusc_tilde.
 //
 // Mel preprocessing pipeline (STFT → power → mel filterbank → log10 dB → tile 4×)
 // is implemented in plain C++ using Essentia's FFTW-backed FFT algorithm.
@@ -36,7 +36,7 @@ public:
                   const std::string& meta_json_path,
                   const std::string& tokenizer_dir,
                   bool use_coreml = false)
-        : m_env(ORT_LOGGING_LEVEL_WARNING, "clap_tilde")
+        : m_env(ORT_LOGGING_LEVEL_WARNING, "rusc_tilde")
         , m_audio_session(nullptr)
         , m_text_session(nullptr)
         , m_memory_info(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault))
@@ -54,7 +54,7 @@ public:
 
         // Load mel filterbank [513, 64] from binary sidecar
         auto mel_path = meta_json_path.substr(0, meta_json_path.rfind('/') + 1)
-                        + "clap_tilde_mel_filters.bin";
+                        + "rusc_tilde_mel_filters.bin";
         m_mel_filters = load_mel_filters(mel_path);   // [513 * 64] row-major
 
         // Hann window [n_fft]

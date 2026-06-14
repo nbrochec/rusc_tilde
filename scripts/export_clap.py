@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Export laion/clap-htsat-fused to TorchScript for use with clap_tilde.
+Export laion/clap-htsat-fused to TorchScript for use with rusc_tilde.
 
-Usage (from the clap_tilde project root):
+Usage (from the rusc_tilde project root):
     conda run -n clap python scripts/export_clap.py
     conda run -n clap python scripts/export_clap.py --output-dir /path/to/output
 
 Outputs in --output-dir (default: ./model):
-    clap_tilde.ts   — TorchScript model loaded by the Max external
+    rusc_tilde.ts   — TorchScript model loaded by the Max external
     vocab.json      — RoBERTa BPE vocabulary (loaded by C++ tokenizer)
     merges.txt      — BPE merge rules (loaded by C++ tokenizer)
 
@@ -62,7 +62,7 @@ class ClapTorchScriptWrapper(nn.Module):
     """
     TorchScript-compatible wrapper for laion/clap-htsat-fused.
 
-    Interface expected by the C++ clap_tilde external:
+    Interface expected by the C++ rusc_tilde external:
         get_sr()                   -> int   (always 48000)
         get_seglen()               -> int   (480000 = 10 s × 48 kHz)
         get_max_text_length()      -> int   (max token length used at export)
@@ -342,14 +342,14 @@ def main():
 
     # ── 7. Save ──────────────────────────────────────────────────────────────
     ms = int(round(args.segment_seconds * 1000))
-    out_path = output_dir / f"clap_tilde_{ms}ms.ts"
+    out_path = output_dir / f"rusc_tilde_{ms}ms.ts"
     scripted.save(str(out_path))
     print(f"\nExport complete → {out_path}")
     print(f"                 {output_dir / 'vocab.json'}")
     print(f"                 {output_dir / 'merges.txt'}")
     print()
-    print("Next: build clap_tilde and point @model to the directory above,")
-    print("      or pass the .ts path as the first argument to clap~.")
+    print("Next: build rusc_tilde and point @model to the directory above,")
+    print("      or pass the .ts path as the first argument to rusc~.")
 
 
 if __name__ == "__main__":

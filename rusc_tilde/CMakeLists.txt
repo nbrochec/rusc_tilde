@@ -4,16 +4,16 @@ include(${C74_MIN_API_DIR}/script/min-pretarget.cmake)
 
 include_directories("${C74_INCLUDES}")
 
-set(SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/clap_tilde.cpp)
+set(SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/rusc_tilde.cpp)
 
 add_library(${PROJECT_NAME} MODULE ${SOURCE_FILES})
 
 add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
     COMMAND ${CMAKE_COMMAND} -E remove_directory
-            "${C74_LIBRARY_OUTPUT_DIRECTORY}/clap~.mxo"
+            "${C74_LIBRARY_OUTPUT_DIRECTORY}/rusc~.mxo"
     COMMAND ${CMAKE_COMMAND} -E make_directory
-            "${C74_LIBRARY_OUTPUT_DIRECTORY}/clap~.mxo/Contents/MacOS"
-    COMMENT "Removing old clap~.mxo"
+            "${C74_LIBRARY_OUTPUT_DIRECTORY}/rusc~.mxo/Contents/MacOS"
+    COMMENT "Removing old rusc~.mxo"
 )
 
 target_link_libraries(${PROJECT_NAME}

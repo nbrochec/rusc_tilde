@@ -66,7 +66,7 @@ struct Docs {
 };
 
 
-class clap_tilde : public object<clap_tilde>, public vector_operator<> {
+class rusc_tilde : public object<rusc_tilde>, public vector_operator<> {
 private:
     std::unique_ptr<ClapClassifier> m_classifier;
 
@@ -94,21 +94,21 @@ public:
     outlet<> outlet_distribution{this, "(list) class probability distribution"};
     outlet<> dumpout            {this, "(any) dumpout"};
 
-    // First arg (optional): path to clap_tilde_audio_*.onnx, or the directory containing all model files.
+    // First arg (optional): path to rusc_tilde_audio_*.onnx, or the directory containing all model files.
     //   If omitted, the model is auto-detected via Max's search path (place model files in
     //   the package's media/ folder or add their directory to Max's search path).
     // Second arg (optional): device — "cpu" or "mps"  (default: cpu)
     argument<symbol> model_arg {this, "model",
-        "Path to model directory or clap_tilde_audio_*.onnx. Optional — auto-detected if omitted."};
+        "Path to model directory or rusc_tilde_audio_*.onnx. Optional — auto-detected if omitted."};
     argument<symbol> device_arg{this, "device",
         "Inference device: 'cpu' or 'mps'. Optional, defaults to 'cpu'."};
 
-    explicit clap_tilde(const atoms& args = {}) {
+    explicit rusc_tilde(const atoms& args = {}) {
         try {
             auto paths = parse_paths(args);
             bool use_coreml = parse_use_coreml(args);
-            cout << "[clap~] model: " << paths.model_path << endl;
-            cout << "[clap~] ONNX backend" << (use_coreml ? " — CoreML EP (MPS)" : " — CPU") << endl;
+            cout << "[rusc~] model: " << paths.model_path << endl;
+            cout << "[rusc~] ONNX backend" << (use_coreml ? " — CoreML EP (MPS)" : " — CPU") << endl;
 
             m_classifier = std::make_unique<ClapClassifier>(
                 [p = paths, use_coreml]() {
@@ -116,13 +116,13 @@ public:
                         p.model_path, p.text_onnx_path, p.meta_json_path,
                         p.tokenizer_dir, use_coreml);
                 });
-            cout << "[clap~] classifier created, loading model on background thread..." << endl;
+            cout << "[rusc~] classifier created, loading model on background thread..." << endl;
         } catch (std::exception& e) {
             error(e.what());
         }
     }
 
-    ~clap_tilde() override {
+    ~rusc_tilde() override {
         if (m_processing_thread.joinable()) {
             m_running = false;
             m_processing_thread.join();
@@ -131,7 +131,7 @@ public:
 
     message<> maxclass_setup{this, "maxclass_setup",
         [this](const c74::min::atoms&, const int) -> c74::min::atoms {
-            cout << " clap~ v1.0.0 (2026) by Nicolas Brochec" << endl;
+            cout << " rusc~ v1.0.0 (2026) by Nicolas Brochec" << endl;
             cout << " Zero-shot real-time audio classification — laion/clap-htsat-fused" << endl;
             cout << " IRCAM, RepMus REACH team" << endl;
             return {};
@@ -316,7 +316,7 @@ public:
                 return {};
             }
 
-            cout << "[clap~] set_classes: " << class_names.size() << " classes" << endl;
+            cout << "[rusc~] set_classes: " << class_names.size() << " classes" << endl;
             for (const auto& n : class_names) cout << "  - " << n << endl;
 
             m_classifier->set_classes(std::move(class_names));
@@ -346,7 +346,7 @@ public:
                 return {};
             }
 
-            cout << "[clap~] add_class: " << class_names.size() << " class(es)" << endl;
+            cout << "[rusc~] add_class: " << class_names.size() << " class(es)" << endl;
             for (const auto& n : class_names) cout << "  - " << n << endl;
 
             m_classifier->add_classes(std::move(class_names));
@@ -385,15 +385,15 @@ public:
         "record <label> <buffer_name> — register a few-shot audio example from a buffer~.",
         MIN_FUNCTION {
             if (inlet != 1) {
-                cerr << "[clap~] record: send to inlet 2" << endl;
+                cerr << "[rusc~] record: send to inlet 2" << endl;
                 return {};
             }
             if (args.size() < 2) {
-                cerr << "[clap~] record: usage: record <label> <buffer_name>" << endl;
+                cerr << "[rusc~] record: usage: record <label> <buffer_name>" << endl;
                 return {};
             }
             if (!m_running) {
-                cerr << "[clap~] record: model not loaded yet" << endl;
+                cerr << "[rusc~] record: model not loaded yet" << endl;
                 return {};
             }
 
@@ -404,7 +404,7 @@ public:
             {
                 buffer_lock<> lock{m_record_buf};
                 if (!lock.valid()) {
-                    cerr << "[clap~] record: buffer not found: " << buf_name << endl;
+                    cerr << "[rusc~] record: buffer not found: " << buf_name << endl;
                     return {};
                 }
 
@@ -436,7 +436,7 @@ public:
                 m_classifier->queue_audio_example(label, std::move(samples));
             }
 
-            cout << "[clap~] record: queued example for label \"" << label << "\"" << endl;
+            cout << "[rusc~] record: queued example for label \"" << label << "\"" << endl;
             return {};
         }
     };
@@ -448,15 +448,15 @@ public:
         "record_multi <label> <polybuffer_name> — register a few-shot prototype by averaging all slots of a polybuffer~.",
         MIN_FUNCTION {
             if (inlet != 1) {
-                cerr << "[clap~] record_multi: send to inlet 2" << endl;
+                cerr << "[rusc~] record_multi: send to inlet 2" << endl;
                 return {};
             }
             if (args.size() < 2) {
-                cerr << "[clap~] record_multi: usage: record_multi <label> <polybuffer_name>" << endl;
+                cerr << "[rusc~] record_multi: usage: record_multi <label> <polybuffer_name>" << endl;
                 return {};
             }
             if (!m_running) {
-                cerr << "[clap~] record_multi: model not loaded yet" << endl;
+                cerr << "[rusc~] record_multi: model not loaded yet" << endl;
                 return {};
             }
 
@@ -497,12 +497,12 @@ public:
             }
 
             if (batch.empty()) {
-                cerr << "[clap~] record_multi: no buffers found in polybuffer~ \""
+                cerr << "[rusc~] record_multi: no buffers found in polybuffer~ \""
                      << poly_name << "\"" << endl;
                 return {};
             }
 
-            cout << "[clap~] record_multi: queued " << batch.size()
+            cout << "[rusc~] record_multi: queued " << batch.size()
                  << " example(s) for label \"" << label << "\"" << endl;
             m_classifier->queue_audio_examples_batch(label, std::move(batch));
             return {};
@@ -515,7 +515,7 @@ public:
         MIN_FUNCTION {
             if (!m_running) return {};
             m_classifier->clear_audio_examples();
-            cout << "[clap~] clear_examples: all audio examples cleared" << endl;
+            cout << "[rusc~] clear_examples: all audio examples cleared" << endl;
             return {};
         }
     };
@@ -525,12 +525,12 @@ public:
         "clear_example <label> — remove the few-shot example for a specific label.",
         MIN_FUNCTION {
             if (args.empty()) {
-                cerr << "[clap~] clear_example: provide a label" << endl;
+                cerr << "[rusc~] clear_example: provide a label" << endl;
                 return {};
             }
             if (!m_running) return {};
             m_classifier->clear_audio_examples(std::string(args[0]));
-            cout << "[clap~] clear_example: cleared \"" << std::string(args[0]) << "\"" << endl;
+            cout << "[rusc~] clear_example: cleared \"" << std::string(args[0]) << "\"" << endl;
             return {};
         }
     };
@@ -540,7 +540,7 @@ public:
         if (!m_classifier) return {};
         m_classifier->set_energy_threshold(threshold.get());
         m_classifier->set_threshold_window(window.get());
-        m_processing_thread = std::thread(&clap_tilde::main_loop, this);
+        m_processing_thread = std::thread(&rusc_tilde::main_loop, this);
         return {};
     }};
 
@@ -555,10 +555,10 @@ public:
 
         if (m_running) {
             m_classifier->initialize_buffers(sr, vector_length);
-            cout << "[clap~] buffers ready — sr: " << sr
+            cout << "[rusc~] buffers ready — sr: " << sr
                  << " vec: " << vector_length << endl;
         } else {
-            cerr << "[clap~] dspsetup: model not running (load failed?)" << endl;
+            cerr << "[rusc~] dspsetup: model not running (load failed?)" << endl;
         }
         return {};
     }};
@@ -574,12 +574,12 @@ private:
         try {
             m_classifier->initialize_model();
             m_running = true;
-            cout << "[clap~] model loaded — segment length: "
+            cout << "[rusc~] model loaded — segment length: "
                  << m_classifier->get_segment_length() << " samples" << endl;
         } catch (const std::exception& e) {
-            cerr << "[clap~] model load error: " << e.what() << endl;
+            cerr << "[rusc~] model load error: " << e.what() << endl;
         } catch (...) {
-            cerr << "[clap~] unknown error during model loading" << endl;
+            cerr << "[rusc~] unknown error during model loading" << endl;
         }
 
         m_model_initialized = true;
@@ -623,8 +623,8 @@ private:
 
     // Accepts:
     //   - no args           → auto-detect via Max's search path
-    //   - path to clap_tilde_audio_<N>ms.onnx
-    //   - path to a directory containing clap_tilde_audio_*.onnx
+    //   - path to rusc_tilde_audio_<N>ms.onnx
+    //   - path to a directory containing rusc_tilde_audio_*.onnx
     static ModelPaths parse_paths(const atoms& args) {
         // Auto-detect: no argument provided or first arg is a device string
         bool no_path_arg = args.empty()
@@ -643,7 +643,7 @@ private:
             p.model_path    = find_audio_onnx_in_dir(resolved);
             p.tokenizer_dir = resolved;
             if (p.model_path.empty())
-                throw std::runtime_error("No clap_tilde_audio_*.onnx found in: " + resolved);
+                throw std::runtime_error("No rusc_tilde_audio_*.onnx found in: " + resolved);
         } else {
             if (path_extension(resolved) != ".onnx")
                 throw std::runtime_error("Expected an .onnx file or directory, got: " + resolved);
@@ -657,11 +657,11 @@ private:
     // Auto-detect model files via Max's search path.
     // Place model files in the package's media/ folder or add their directory to Max's search path.
     static ModelPaths auto_detect_paths() {
-        c74::min::path meta_search{"clap_tilde_meta.json"};
+        c74::min::path meta_search{"rusc_tilde_meta.json"};
         auto meta_native = static_cast<std::string>(meta_search);
         if (meta_native.empty() || !path_exists(meta_native))
             throw std::runtime_error(
-                "[clap~] Model not found via auto-detect. "
+                "[rusc~] Model not found via auto-detect. "
                 "Pass the model directory as an argument, or place model files in Max's search path.");
 
         ModelPaths p;
@@ -670,18 +670,18 @@ private:
         p.model_path     = find_audio_onnx_in_dir(p.tokenizer_dir);
         if (p.model_path.empty())
             throw std::runtime_error(
-                "[clap~] clap_tilde_meta.json found but no clap_tilde_audio_*.onnx in: "
+                "[rusc~] rusc_tilde_meta.json found but no rusc_tilde_audio_*.onnx in: "
                 + p.tokenizer_dir);
-        p.text_onnx_path = path_join(p.tokenizer_dir, "clap_tilde_text.onnx");
+        p.text_onnx_path = path_join(p.tokenizer_dir, "rusc_tilde_text.onnx");
 
         return validate_paths(p);
     }
 
     static ModelPaths validate_paths(ModelPaths p) {
         if (p.text_onnx_path.empty())
-            p.text_onnx_path = path_join(p.tokenizer_dir, "clap_tilde_text.onnx");
+            p.text_onnx_path = path_join(p.tokenizer_dir, "rusc_tilde_text.onnx");
         if (p.meta_json_path.empty())
-            p.meta_json_path = path_join(p.tokenizer_dir, "clap_tilde_meta.json");
+            p.meta_json_path = path_join(p.tokenizer_dir, "rusc_tilde_meta.json");
 
         if (!path_exists(p.model_path))
             throw std::runtime_error("Audio ONNX not found: " + p.model_path);
@@ -697,13 +697,13 @@ private:
         return p;
     }
 
-    // Find the first clap_tilde_audio_*.onnx in a directory using POSIX readdir.
+    // Find the first rusc_tilde_audio_*.onnx in a directory using POSIX readdir.
     static std::string find_audio_onnx_in_dir(const std::string& dir) {
         DIR* d = opendir(dir.c_str());
         if (!d) return {};
         std::string result;
         struct dirent* entry;
-        const std::string prefix = "clap_tilde_audio";
+        const std::string prefix = "rusc_tilde_audio";
         const std::string suffix = ".onnx";
         while ((entry = readdir(d)) != nullptr) {
             std::string name = entry->d_name;
@@ -748,4 +748,4 @@ private:
 };
 
 
-MIN_EXTERNAL(clap_tilde);
+MIN_EXTERNAL(rusc_tilde);

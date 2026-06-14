@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.19)
 set(CMAKE_CXX_STANDARD 17)
-project(clap_tilde VERSION 1.0.0)
+project(rusc_tilde VERSION 1.0.0)
 
 set(CMAKE_OSX_ARCHITECTURES arm64)
 include(FetchContent)
@@ -60,7 +60,7 @@ message(STATUS "FFTW3f:    ${FFTW3F_LIB}")
 
 # ── targets ───────────────────────────────────────────────────────────────────
 add_subdirectory(src)
-add_subdirectory(clap_tilde)
+add_subdirectory(rusc_tilde)
 
 # ── C++ standard / deployment target ─────────────────────────────────────────
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum OS X deployment version" FORCE)

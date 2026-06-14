@@ -601,7 +601,7 @@
 					"numoutlets" : 4,
 					"outlettype" : [ "", "", "", "" ],
 					"patching_rect" : [ 167.0, 431.0, 591.0, 22.0 ],
-					"text" : "clap~ /Users/nicolasbrochec/Developer/clap_tilde/model/clap_tilde_audio_1000ms.onnx MPS @threshold -80"
+					"text" : "rusc~ /Users/nicolasbrochec/Developer/rusc_tilde/model/rusc_tilde_audio_1000ms.onnx MPS @threshold -80"
 				}
 
 			}
@@ -1081,7 +1081,7 @@
 				"implicit" : 1
 			}
 , 			{
-				"name" : "clap~.mxo",
+				"name" : "rusc~.mxo",
 				"type" : "iLaX"
 			}
 , 			{

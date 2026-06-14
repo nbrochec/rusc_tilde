@@ -1,10 +1,10 @@
-# clap~
+# rusc~
 
 > **Experimental.** Research prototype. Not production software. Use at own risk.
 
 Real-time zero-shot and few-shot audio classification in Max/MSP using [laion/clap-htsat-fused](https://huggingface.co/laion/clap-htsat-fused).
 
-`clap~` listens to incoming audio, segments it into fixed-length windows, and classifies each window against a set of class prototypes using CLAP (Contrastive Language-Audio Pretraining). Class prototypes can be text descriptions, audio examples recorded from a `buffer~` or `polybuffer~`, or a mix of both.
+`rusc~` listens to incoming audio, segments it into fixed-length windows, and classifies each window against a set of class prototypes using CLAP (Contrastive Language-Audio Pretraining). Class prototypes can be text descriptions, audio examples recorded from a `buffer~` or `polybuffer~`, or a mix of both.
 
 ---
 
@@ -21,10 +21,10 @@ Real-time zero-shot and few-shot audio classification in Max/MSP using [laion/cl
 ```bash
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . --target clap_tilde
+cmake --build . --target rusc_tilde
 ```
 
-The external is output to `externals/clap~.mxo`.
+The external is output to `externals/rusc~.mxo`.
 
 Dependencies (expected in `libs/`): ONNX Runtime, r8brain, essentia, FFTW3. See `CMakeLists.txt` for paths.
 
@@ -45,10 +45,10 @@ conda run -n clap python scripts/export_clap_onnx.py
 This downloads `laion/clap-htsat-fused` from HuggingFace and writes the following files to `./model/`:
 
 ```
-clap_tilde_audio_1000ms.onnx  — audio encoder, 1000ms context
-clap_tilde_text.onnx          — text encoder
-clap_tilde_meta.json          — model metadata
-clap_tilde_mel_filters.bin    — mel filterbank coefficients
+rusc_tilde_audio_1000ms.onnx  — audio encoder, 1000ms context
+rusc_tilde_text.onnx          — text encoder
+rusc_tilde_meta.json          — model metadata
+rusc_tilde_mel_filters.bin    — mel filterbank coefficients
 vocab.json / merges.txt       — BPE tokenizer files
 ```
 
@@ -61,11 +61,11 @@ You can pass `--segment-seconds 0.5` or `--segment-seconds 1.0` to export a diff
 You can instantiate the object directly in Max such as described below:
 
 ```
-[clap~]                              — auto-detects model files via Max's search path
-[clap~ /path/to/model]               — auto-detects the .onnx file in the directory
-[clap~ /path/to/model/clap_tilde_audio_1000ms.onnx]
-[clap~ /path/to/model mps]           — enable CoreML / Apple Neural Engine
-[clap~ mps]                          — auto-detect + CoreML
+[rusc~]                              — auto-detects model files via Max's search path
+[rusc~ /path/to/model]               — auto-detects the .onnx file in the directory
+[rusc~ /path/to/model/rusc_tilde_audio_1000ms.onnx]
+[rusc~ /path/to/model mps]           — enable CoreML / Apple Neural Engine
+[rusc~ mps]                          — auto-detect + CoreML
 ```
 
 For auto-detection to work, place all model files in your Max package's `media/` folder or add their directory to Max's search path.
