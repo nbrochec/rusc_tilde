@@ -1,0 +1,27 @@
+{
+	"name" : "@C74_PACKAGE_NAME@",
+	"displayname" : "rusc~",
+	"version" : "@GIT_VERSION_MAJ@.@GIT_VERSION_MIN@.@GIT_VERSION_SUB@",
+	"author" : "Nicolas Brochec",
+	"description" : "Real-time Universal Sound Classifier: zero-shot and few-shot audio classification with CLAP.",
+	"tags" : [ "audio", "machine learning", "classification" ],
+	"website" : "https://github.com/nbrochec/rusc_tilde",
+	"max_version_min" : "8.0",
+	"max_version_max" : "none",
+	"os" : {
+		"macintosh" : {
+			"platform" : [ "aarch64" ],
+			"min_version" : "14.0"
+		},
+		"windows" : {
+			"platform" : [ "x64" ],
+			"min_version" : "10"
+		}
+	},
+	"package_extra" : {
+		"reverse_domain" : "com.nbrochec",
+		"copyright" : "Copyright (c) 2026 Nicolas Brochec",
+		"add_verinfo" : true,
+		"exclude_from_collectives" : "no"
+	}
+}

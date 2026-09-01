@@ -1,0 +1,56 @@
+name: build
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (arm64)
+            os: macos-latest
+            generator: ""
+            config_args: -DCMAKE_BUILD_TYPE=Release
+            external: externals/rusc~.mxo
+          - name: Windows (x64)
+            os: windows-latest
+            generator: -G "Visual Studio 17 2022" -A x64
+            config_args: ""
+            external: externals/rusc~.mxe64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake -S . -B build ${{ matrix.generator }} ${{ matrix.config_args }}
+
+      - name: Build external
+        run: cmake --build build --config Release --target rusc_tilde --parallel
+
+      - name: Build tests
+        run: cmake --build build --config Release --target rusc_tests --parallel
+
+      - name: Run tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Check external exists
+        shell: bash
+        run: ls -la externals && test -e "${{ matrix.external }}"
+
+      - name: Upload external
+        uses: actions/upload-artifact@v4
+        with:
+          name: rusc_tilde-${{ runner.os }}
+          path: |
+            externals/
+            !externals/**/*.dSYM
+          if-no-files-found: error

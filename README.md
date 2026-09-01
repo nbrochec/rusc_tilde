@@ -11,8 +11,9 @@ Real-time zero-shot and few-shot audio classification in Max/MSP using [laion/cl
 
 ## Requirements
 
-- macOS, Apple Silicon (arm64)
+- macOS 14+ on Apple Silicon (arm64), or Windows 10+ (x64)
 - Max 8 or later
+- CMake 3.19+, a C++17 compiler (Xcode / Visual Studio 2022)
 - Python (conda env) for model export — see below
 
 ---
@@ -20,14 +21,27 @@ Real-time zero-shot and few-shot audio classification in Max/MSP using [laion/cl
 ## Build
 
 ```bash
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . --target rusc_tilde
+git clone --recursive https://github.com/nbrochec/rusc_tilde.git
+cd rusc_tilde
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release          # macOS
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64    # Windows
+cmake --build build --config Release --target rusc_tilde
 ```
 
-The external is output to `externals/rusc~.mxo`.
+The external is written to `externals/rusc~.mxo` (macOS) or `externals/rusc~.mxe64` (Windows).
 
-Dependencies (expected in `libs/`): ONNX Runtime, r8brain, essentia, FFTW3. See `CMakeLists.txt` for paths.
+All dependencies are fetched automatically at configure time: ONNX Runtime (prebuilt release), r8brain (resampler) and pocketfft (FFT). A local copy in `libs/onnxruntime` or `libs/r8brain` is used instead when present.
+
+On Windows, `onnxruntime.dll` is copied next to the external. When installing into a Max package, put the DLL in the package's `support/` folder so Max can find it.
+
+Unit tests for the DSP front-end (no model required):
+
+```bash
+cmake --build build --config Release --target rusc_tests
+ctest --test-dir build -C Release --output-on-failure
+```
+
+Continuous integration builds both platforms on every push (`.github/workflows/build.yml`).
 
 ---
 
@@ -64,14 +78,13 @@ You can instantiate the object directly in Max such as described below:
 ```
 [rusc~]                              — auto-detects model files via Max's search path
 [rusc~ clap_audio_1000ms.onnx]       — file name only, found via Max's search path
-[rusc~ clap_audio_1000ms]            — same, ".onnx" is appended if omitted
 [rusc~ /path/to/model]               — auto-detects the .onnx file in the directory
 [rusc~ /path/to/model/clap_audio_1000ms.onnx]
 [rusc~ clap_audio_1000ms.onnx ane]   — run the encoder on the Apple Neural Engine
 [rusc~ ane]                          — auto-detect + Neural Engine
 ```
 
-No full path is needed: if the model files are inside a Max package (for example the package's `media/` folder) or in a folder added to Max's search path, Max finds them by name. The other model files (`clap_text.onnx`, `clap_meta.json`, `clap_mel_filters.bin`, `vocab.json`, `merges.txt`) must sit next to the `.onnx` file.
+No full path is needed, but keep the `.onnx` extension since it identifies the model format: if the model files are inside a Max package (for example the package's `media/` folder) or in a folder added to Max's search path, Max finds them by name. The other model files (`clap_text.onnx`, `clap_meta.json`, `clap_mel_filters.bin`, `vocab.json`, `merges.txt`) must sit next to the `.onnx` file.
 
 ### Inlets
 

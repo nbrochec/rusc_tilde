@@ -1,12 +1,22 @@
 #include "c74_min.h"
 #include <chrono>
-#include <dirent.h>
+#include <filesystem>
 #include <mutex>
 #include <optional>
-#include <pthread.h>
 #include <sstream>
-#include <sys/resource.h>
-#include <sys/stat.h>
+#include <thread>
+
+#ifdef _WIN32
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#elif defined(__APPLE__)
+#  include <pthread.h>
+#  include <sys/qos.h>
+#else
+#  include <sys/resource.h>
+#endif
 
 #include "CDSPResampler.h"
 #include "clap_classifier.h"
@@ -15,27 +25,44 @@
 #include "utility.h"
 
 using namespace c74::min;
+namespace fs = std::filesystem;
 
+// Paths are handled as UTF-8 std::string everywhere; std::filesystem does the
+// platform-specific work (separators, wide strings on Windows).
+static fs::path to_fs(const std::string& p) { return fs::u8path(p); }
 static bool path_is_dir(const std::string& p) {
-    struct stat st;
-    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+    std::error_code ec;
+    return fs::is_directory(to_fs(p), ec);
 }
 static bool path_exists(const std::string& p) {
-    struct stat st;
-    return stat(p.c_str(), &st) == 0;
+    std::error_code ec;
+    return fs::exists(to_fs(p), ec);
 }
 static std::string path_join(const std::string& a, const std::string& b) {
-    return a.back() == '/' ? a + b : a + "/" + b;
+    return (to_fs(a) / to_fs(b)).u8string();
 }
 static std::string path_parent(const std::string& p) {
-    auto pos = p.rfind('/');
-    return pos == std::string::npos ? "." : p.substr(0, pos);
+    auto parent = to_fs(p).parent_path();
+    return parent.empty() ? std::string(".") : parent.u8string();
 }
 static std::string path_extension(const std::string& p) {
-    auto pos = p.rfind('.');
-    auto sl  = p.rfind('/');
-    if (pos == std::string::npos || (sl != std::string::npos && pos < sl)) return "";
-    return p.substr(pos);
+    return to_fs(p).extension().u8string();
+}
+static bool path_is_absolute(const std::string& p) {
+    return to_fs(p).is_absolute();
+}
+
+// Lower the *current thread's* priority so patch editing / Max UI stays responsive
+// while the model loads and runs inference.
+static void lower_thread_priority() {
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#elif defined(__APPLE__)
+    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#else
+    // Linux: nice applies per-thread when who == 0
+    setpriority(PRIO_PROCESS, 0, 10);
+#endif
 }
 
 struct Docs {
@@ -598,8 +625,7 @@ private:
     }
 
     void main_loop() {
-        // Lower OS priority so patch editing / Max UI stays responsive
-        setpriority(PRIO_PROCESS, 0, 10);
+        lower_thread_priority();
 
         try {
             m_classifier->initialize_model();
@@ -695,7 +721,7 @@ private:
 
         auto raw = std::string(args[0]);
         std::string resolved;
-        if (!raw.empty() && raw[0] == '/') {
+        if (path_is_absolute(raw)) {
             resolved = raw;
             if (!path_exists(resolved))
                 throw std::runtime_error("[rusc~] path not found: " + resolved);
@@ -767,26 +793,19 @@ private:
         return p;
     }
 
-    // Find the first clap_audio_*.onnx in a directory using POSIX readdir.
+    // Find the first clap_audio_*.onnx in a directory.
     static std::string find_audio_onnx_in_dir(const std::string& dir) {
-        DIR* d = opendir(dir.c_str());
-        if (!d) return {};
-        std::string result;
-        struct dirent* entry;
         const std::string prefix = "clap_audio";
         const std::string suffix = ".onnx";
-        while ((entry = readdir(d)) != nullptr) {
-            std::string name = entry->d_name;
+        std::error_code ec;
+        for (const auto& entry : fs::directory_iterator(to_fs(dir), ec)) {
+            std::string name = entry.path().filename().u8string();
             if (name.size() > prefix.size() + suffix.size()
-                && name.substr(0, prefix.size()) == prefix
-                && name.substr(name.size() - suffix.size()) == suffix)
-            {
-                result = path_join(dir, name);
-                break;
-            }
+                && name.compare(0, prefix.size(), prefix) == 0
+                && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+                return entry.path().u8string();
         }
-        closedir(d);
-        return result;
+        return {};
     }
 
 

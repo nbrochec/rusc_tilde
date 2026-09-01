@@ -5,6 +5,7 @@
 // RoBERTa byte-level BPE tokenizer (matches laion/clap-htsat-fused tokenizer).
 // Loads vocab.json and merges.txt exported by scripts/export_clap.py.
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -22,8 +23,8 @@ public:
     explicit BPETokenizer(const std::string& tokenizer_dir, int max_length = DEFAULT_MAX_LENGTH)
         : m_max_length(max_length)
     {
-        load_vocab(tokenizer_dir + "/vocab.json");
-        load_merges(tokenizer_dir + "/merges.txt");
+        load_vocab ((std::filesystem::u8path(tokenizer_dir) / "vocab.json").u8string());
+        load_merges((std::filesystem::u8path(tokenizer_dir) / "merges.txt").u8string());
         build_byte_encoder();
 
         // RoBERTa special token ids
@@ -109,7 +110,7 @@ private:
 
     void load_vocab(const std::string& path) {
         // Parse flat JSON {"token": id, ...}
-        std::ifstream f(path);
+        std::ifstream f(std::filesystem::u8path(path));
         if (!f.is_open()) throw std::runtime_error("Cannot open vocab.json: " + path);
 
         std::string line, token;
@@ -180,7 +181,7 @@ private:
     }
 
     void load_merges(const std::string& path) {
-        std::ifstream f(path);
+        std::ifstream f(std::filesystem::u8path(path));
         if (!f.is_open()) throw std::runtime_error("Cannot open merges.txt: " + path);
 
         std::string line;

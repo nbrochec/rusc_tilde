@@ -3,26 +3,23 @@
 
 // ONNX Runtime backend for rusc_tilde.
 //
-// Mel preprocessing pipeline (STFT → power → mel filterbank → log10 dB → tile 4×)
-// is implemented in plain C++ using Essentia's FFTW-backed FFT algorithm.
-// No LibTorch dependency.
+// Mel preprocessing (STFT → power → mel filterbank → log10 dB → tile 4×) is
+// implemented in MelFrontend with pocketfft. No LibTorch / Essentia dependency.
 
 #include <onnxruntime_cxx_api.h>
 #ifdef __APPLE__
 #include <coreml_provider_factory.h>
 #endif
 
-#include <essentia/essentia.h>
-#include <essentia/algorithmfactory.h>
-
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
-#include <complex>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <memory>
-#include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -30,10 +27,13 @@
 
 #include "bpe_tokenizer.h"
 #include "clap_model.h"
+#include "mel_frontend.h"
 
 
 class ClapModelONNX : public IClapModel {
 public:
+    static constexpr int EMB_DIM = 512;
+
     ClapModelONNX(const std::string& audio_onnx_path,
                   const std::string& text_onnx_path,
                   const std::string& meta_json_path,
@@ -55,25 +55,12 @@ public:
         m_nb_max_frames      = parse_int  (meta, "nb_max_frames");
         m_context_ms         = m_default_context_ms;
 
-        // Load mel filterbank [513, 64] from binary sidecar
-        auto mel_path = meta_json_path.substr(0, meta_json_path.rfind('/') + 1)
-                        + "clap_mel_filters.bin";
-        m_mel_filters = load_mel_filters(mel_path);   // [513 * 64] row-major
-
-        // Hann window [n_fft]
-        m_hann_window.resize(static_cast<std::size_t>(m_n_fft));
-        for (int i = 0; i < m_n_fft; ++i)
-            m_hann_window[static_cast<std::size_t>(i)] =
-                0.5f * (1.f - std::cos(2.f * static_cast<float>(M_PI) * i / (m_n_fft - 1)));
-
-        // Essentia FFT (FFTW-backed)
-        essentia::init();
-        auto& factory = essentia::standard::AlgorithmFactory::instance();
-        m_fft = factory.create("FFT", "size", m_n_fft);
-        m_fft_frame.assign(static_cast<std::size_t>(m_n_fft), 0.f);
-        m_fft_spectrum.resize(static_cast<std::size_t>(m_n_fft / 2 + 1));
-        m_fft->input ("frame").set(m_fft_frame);
-        m_fft->output("fft")  .set(m_fft_spectrum);
+        // Mel filterbank [n_fft/2+1, 64] from the binary sidecar next to the meta file
+        auto mel_path = (std::filesystem::u8path(meta_json_path).parent_path()
+                         / "clap_mel_filters.bin").u8string();
+        const std::size_t n_bins = static_cast<std::size_t>(m_n_fft / 2 + 1);
+        m_frontend = std::make_unique<MelFrontend>(
+            m_n_fft, m_hop_length, load_mel_filters(mel_path, n_bins * MelFrontend::N_MELS));
 
         // ONNX sessions
         Ort::SessionOptions opts;
@@ -96,8 +83,8 @@ public:
         (void)use_ane;
 #endif
 
-        m_audio_session = Ort::Session(m_env, audio_onnx_path.c_str(), opts);
-        m_text_session  = Ort::Session(m_env, text_onnx_path.c_str(),  opts);
+        m_audio_session = Ort::Session(m_env, ort_path(audio_onnx_path).c_str(), opts);
+        m_text_session  = Ort::Session(m_env, ort_path(text_onnx_path).c_str(),  opts);
 
         // Cache input/output names
         Ort::AllocatorWithDefaultOptions alloc;
@@ -110,9 +97,7 @@ public:
         m_tokenizer = std::make_unique<BPETokenizer>(tokenizer_dir, m_max_text_length);
     }
 
-    ~ClapModelONNX() override {
-        delete m_fft;
-    }
+    ~ClapModelONNX() override = default;
 
     void set_context_ms(int ms) override {
         ms = std::max(100, std::min(ms, m_default_context_ms));
@@ -154,25 +139,25 @@ public:
             Ort::RunOptions{nullptr}, in_names, inputs.data(), 2, out_names, 1);
 
         auto* ptr = outputs[0].GetTensorMutableData<float>();
-        return std::vector<float>(ptr, ptr + static_cast<std::size_t>(N * 512));
+        return std::vector<float>(ptr, ptr + static_cast<std::size_t>(N * EMB_DIM));
     }
 
     // text_embs: [num_classes * 512] row-major
     ClassificationResult classify(std::vector<float> audio,
                                   const std::vector<float>& text_embs,
                                   int num_classes) override {
-        auto t1        = std::chrono::high_resolution_clock::now();
+        auto t1        = std::chrono::steady_clock::now();
         auto audio_emb = run_audio_encoder(audio);  // [512]
-        auto t2        = std::chrono::high_resolution_clock::now();
+        auto t2        = std::chrono::steady_clock::now();
 
         // logits[i] = exp(scale) * dot(audio_emb, text_embs[i*512..])
         float scale = std::exp(m_logit_scale_a);
         std::vector<float> logits(static_cast<std::size_t>(num_classes));
         for (int i = 0; i < num_classes; ++i) {
             float dot = 0.f;
-            for (int j = 0; j < 512; ++j)
+            for (int j = 0; j < EMB_DIM; ++j)
                 dot += audio_emb[static_cast<std::size_t>(j)]
-                     * text_embs [static_cast<std::size_t>(i * 512 + j)];
+                     * text_embs [static_cast<std::size_t>(i * EMB_DIM + j)];
             logits[static_cast<std::size_t>(i)] = scale * dot;
         }
 
@@ -188,12 +173,22 @@ public:
 
 
 private:
+    // ONNX Runtime takes wide-char paths on Windows and UTF-8 elsewhere.
+#ifdef _WIN32
+    static std::wstring ort_path(const std::string& utf8) {
+        return std::filesystem::u8path(utf8).wstring();
+    }
+#else
+    static const std::string& ort_path(const std::string& utf8) { return utf8; }
+#endif
+
     // Shared audio encoder: waveform → features → ONNX → [512]
     std::vector<float> run_audio_encoder(const std::vector<float>& audio) {
         const int64_t nf = static_cast<int64_t>(m_nb_max_frames);
-        auto feats = waveform_to_features(audio, nf);  // [4 * nf * 64]
+        auto feats = m_frontend->compute(
+            audio, static_cast<std::size_t>(get_segment_length()), nf);   // [4 * nf * 64]
 
-        const std::vector<int64_t> feat_shape = {1, 4, nf, 64};
+        const std::vector<int64_t> feat_shape = {1, 4, nf, MelFrontend::N_MELS};
         auto audio_val = Ort::Value::CreateTensor<float>(
             m_memory_info, feats.data(), feats.size(),
             feat_shape.data(), feat_shape.size());
@@ -205,84 +200,22 @@ private:
             Ort::RunOptions{nullptr}, in_names, &audio_val, 1, out_names, 1);
 
         auto* ptr = outputs[0].GetTensorMutableData<float>();
-        return std::vector<float>(ptr, ptr + 512);
-    }
-
-    // Compute mel features [4 * nb_frames * 64] matching Python CLAP preprocessing:
-    //   center-reflect-pad → STFT (Hann, hop) → power → mel filterbank → log10 dB → tile 4×
-    // Audio is trimmed to the current context window; mel frames are zero-padded to nb_frames.
-    std::vector<float> waveform_to_features(const std::vector<float>& audio, int64_t nb_frames) {
-        const std::size_t seg = static_cast<std::size_t>(get_segment_length());
-
-        // 1. Trim / zero-pad to current context window
-        std::vector<float> wav(audio.begin(), audio.end());
-        if (wav.size() < seg)
-            wav.resize(seg, 0.f);
-        else if (wav.size() > seg)
-            wav.resize(seg);
-
-        // 2. Reflect padding (matches torch.stft center=True)
-        const int pad    = m_n_fft / 2;
-        const std::size_t N = wav.size();
-        std::vector<float> padded(static_cast<std::size_t>(pad) + N + static_cast<std::size_t>(pad));
-        for (int i = 0; i < pad; ++i)
-            padded[static_cast<std::size_t>(pad - 1 - i)] = wav[static_cast<std::size_t>(i + 1)];
-        std::copy(wav.begin(), wav.end(), padded.begin() + pad);
-        for (int i = 0; i < pad; ++i)
-            padded[static_cast<std::size_t>(pad) + N + static_cast<std::size_t>(i)] =
-                wav[N - 2 - static_cast<std::size_t>(i)];
-
-        // 3. STFT frame-by-frame → mel → log10 dB
-        int64_t T_actual = (static_cast<int64_t>(padded.size()) - m_n_fft) / m_hop_length + 1;
-        int64_t T        = std::min(T_actual, nb_frames);
-
-        // log_mel: [nb_frames, 64] zero-initialised (silence padding for t >= T)
-        std::vector<float> log_mel(static_cast<std::size_t>(nb_frames * 64), 0.f);
-
-        for (int64_t t = 0; t < T; ++t) {
-            // Windowed frame → FFT
-            std::size_t offset = static_cast<std::size_t>(t * m_hop_length);
-            for (int i = 0; i < m_n_fft; ++i)
-                m_fft_frame[static_cast<std::size_t>(i)] =
-                    padded[offset + static_cast<std::size_t>(i)]
-                    * m_hann_window[static_cast<std::size_t>(i)];
-            m_fft->compute();
-
-            // Mel filterbank: power[k] * mel_filters[k, j]  →  mel[j]
-            std::size_t row = static_cast<std::size_t>(t * 64);
-            for (int j = 0; j < 64; ++j) {
-                float mel_val = 0.f;
-                for (int k = 0; k < 513; ++k) {
-                    float re = m_fft_spectrum[static_cast<std::size_t>(k)].real();
-                    float im = m_fft_spectrum[static_cast<std::size_t>(k)].imag();
-                    mel_val += m_mel_filters[static_cast<std::size_t>(k * 64 + j)] * (re*re + im*im);
-                }
-                log_mel[row + static_cast<std::size_t>(j)] =
-                    10.f * std::log10(std::max(mel_val, 1e-10f));
-            }
-        }
-
-        // 4. Tile 4× → [1, 4, nb_frames, 64] flattened
-        std::size_t frame_sz = static_cast<std::size_t>(nb_frames * 64);
-        std::vector<float> output(4 * frame_sz);
-        for (int c = 0; c < 4; ++c)
-            std::copy(log_mel.begin(), log_mel.end(),
-                      output.begin() + static_cast<std::ptrdiff_t>(c * frame_sz));
-        return output;
+        return std::vector<float>(ptr, ptr + EMB_DIM);
     }
 
 
-    static std::vector<float> load_mel_filters(const std::string& path) {
-        std::ifstream f(path, std::ios::binary);
+    static std::vector<float> load_mel_filters(const std::string& path, std::size_t count) {
+        std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
         if (!f) throw std::runtime_error("Cannot open mel filters: " + path);
-        std::vector<float> data(513 * 64);
-        f.read(reinterpret_cast<char*>(data.data()), 513 * 64 * sizeof(float));
+        std::vector<float> data(count);
+        f.read(reinterpret_cast<char*>(data.data()),
+               static_cast<std::streamsize>(count * sizeof(float)));
         if (!f) throw std::runtime_error("Failed to read mel filters from: " + path);
         return data;
     }
 
     static std::string read_file(const std::string& path) {
-        std::ifstream f(path);
+        std::ifstream f(std::filesystem::u8path(path));
         if (!f) throw std::runtime_error("Cannot open: " + path);
         std::ostringstream ss;
         ss << f.rdbuf();
@@ -329,13 +262,7 @@ private:
     Ort::MemoryInfo m_memory_info;
 
     std::unique_ptr<BPETokenizer> m_tokenizer;
-
-    // DSP (Essentia FFT + mel)
-    essentia::standard::Algorithm*        m_fft = nullptr;
-    std::vector<essentia::Real>           m_fft_frame;     // [n_fft]
-    std::vector<std::complex<essentia::Real>> m_fft_spectrum; // [n_fft/2+1]
-    std::vector<float>                    m_mel_filters;   // [513 * 64] row-major
-    std::vector<float>                    m_hann_window;   // [n_fft]
+    std::unique_ptr<MelFrontend>  m_frontend;
 
     // Model parameters
     int   m_sample_rate;
