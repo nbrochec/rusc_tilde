@@ -39,8 +39,8 @@
 	<methodlist>
 
 		<method name='clear_example'>
-			<digest>clear_example <label> — remove the few-shot example for a specific label</digest>
-			<description>clear_example <label> — remove the few-shot example for a specific label. </description>
+			<digest>clear_example &lt;label&gt; — remove the few-shot example for a specific label</digest>
+			<description>clear_example &lt;label&gt; — remove the few-shot example for a specific label. </description>
 		</method>
 
 		<method name='clear_examples'>
@@ -49,8 +49,8 @@
 		</method>
 
 		<method name='record'>
-			<digest>record <label> <buffer_name> — register a few-shot audio example from a buffer~</digest>
-			<description>record <label> <buffer_name> — register a few-shot audio example from a buffer~. </description>
+			<digest>record &lt;label&gt; &lt;buffer_name&gt; — register a few-shot audio example from a buffer~</digest>
+			<description>record &lt;label&gt; &lt;buffer_name&gt; — register a few-shot audio example from a buffer~. </description>
 		</method>
 
 		<method name='add_class'>
@@ -59,8 +59,8 @@
 		</method>
 
 		<method name='record_multi'>
-			<digest>record_multi <label> <polybuffer_name> — register a few-shot prototype by averaging all slots of a polybuffer~</digest>
-			<description>record_multi <label> <polybuffer_name> — register a few-shot prototype by averaging all slots of a polybuffer~. </description>
+			<digest>record_multi &lt;label&gt; &lt;polybuffer_name&gt; — register a few-shot prototype by averaging all slots of a polybuffer~</digest>
+			<description>record_multi &lt;label&gt; &lt;polybuffer_name&gt; — register a few-shot prototype by averaging all slots of a polybuffer~. </description>
 		</method>
 
 		<method name='classnames'>

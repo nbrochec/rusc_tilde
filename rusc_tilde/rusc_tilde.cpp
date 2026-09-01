@@ -397,7 +397,7 @@ public:
     // Buffer must be mono or stereo (only channel 0 is used); any sample rate accepted
     // (linear-interpolation resample to 48 kHz before encoding).
     message<> record_msg{this, "record",
-        "record <label> <buffer_name> — register a few-shot audio example from a buffer~.",
+        "record [label] [buffer_name] — register a few-shot audio example from a buffer~.",
         MIN_FUNCTION {
             if (inlet != 1) {
                 cerr << "[rusc~] record: send to inlet 2" << endl;
@@ -460,7 +460,7 @@ public:
     // Reads every slot of a polybuffer~ (<name>.1, <name>.2, …), encodes each as an audio
     // embedding, averages them, and registers the mean as the prototype for the given label.
     message<> record_multi_msg{this, "record_multi",
-        "record_multi <label> <polybuffer_name> — register a few-shot prototype by averaging all slots of a polybuffer~.",
+        "record_multi [label] [polybuffer_name] — register a few-shot prototype by averaging all slots of a polybuffer~.",
         MIN_FUNCTION {
             if (inlet != 1) {
                 cerr << "[rusc~] record_multi: send to inlet 2" << endl;
@@ -537,7 +537,7 @@ public:
 
     // clear_example <label>  — remove a single label
     message<> clear_example{this, "clear_example",
-        "clear_example <label> — remove the few-shot example for a specific label.",
+        "clear_example [label] — remove the few-shot example for a specific label.",
         MIN_FUNCTION {
             if (args.empty()) {
                 cerr << "[rusc~] clear_example: provide a label" << endl;
@@ -680,8 +680,8 @@ private:
 
     // Accepts:
     //   - no args                       → auto-detect via Max's search path
-    //   - clap_audio_<N>ms.onnx         → bare file name, located via Max's search path
-    //   - clap_audio_<N>ms              → same, ".onnx" appended if omitted
+    //   - clap_audio_<N>ms.onnx         → bare file name (extension required, it identifies
+    //                                     the model format), located via Max's search path
     //   - a folder name or absolute path to a directory containing clap_audio_*.onnx
     //   - an absolute path to clap_audio_<N>ms.onnx
     static ModelPaths parse_paths(const atoms& args) {
@@ -701,8 +701,6 @@ private:
                 throw std::runtime_error("[rusc~] path not found: " + resolved);
         } else {
             resolved = locate_in_max_search_path(raw);
-            if (resolved.empty() && path_extension(raw).empty())
-                resolved = locate_in_max_search_path(raw + ".onnx");
             if (resolved.empty())
                 throw std::runtime_error(
                     "[rusc~] \"" + raw + "\" not found in Max's search path. "
