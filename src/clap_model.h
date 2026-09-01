@@ -26,6 +26,8 @@ struct IClapModel {
 
     virtual int  get_sample_rate()    const = 0;
     virtual int  get_segment_length() const = 0;   // samples at model sr for current context
+    virtual int  get_context_ms()     const = 0;   // effective context in ms (after clamping)
+    virtual int  get_max_context_ms() const = 0;   // context the model was exported with
     virtual void set_context_ms(int ms) = 0;
 };
 

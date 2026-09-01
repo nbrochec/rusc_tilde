@@ -32,6 +32,9 @@ public:
     void initialize_model() {
         std::lock_guard<std::mutex> lock{m_mutex};
         m_model = m_model_factory();
+        // Apply a context requested before the model existed (e.g. @context in the object box)
+        if (m_requested_context_ms)
+            m_model->set_context_ms(*m_requested_context_ms);
         m_initialized = is_initialized();
     }
 
@@ -52,9 +55,13 @@ public:
         m_initialized = is_initialized();
     }
 
-    void set_context_ms(int ms) {
+    // Returns the effective context in ms. Before the model is loaded the request is
+    // stored and applied in initialize_model(); the model may clamp it to its exported maximum.
+    int set_context_ms(int ms) {
         std::lock_guard<std::mutex> lock{m_mutex};
-        if (m_model) m_model->set_context_ms(ms);
+        m_requested_context_ms = ms;
+        if (!m_model) return ms;
+        m_model->set_context_ms(ms);
         if (m_classification_buffer && m_input_sr && m_input_vector_length) {
             m_classification_buffer = std::make_unique<ResamplingBuffer>(
                 static_cast<std::size_t>(m_model->get_segment_length()),
@@ -62,6 +69,19 @@ public:
                 *m_input_sr,
                 m_model->get_sample_rate());
         }
+        return m_model->get_context_ms();
+    }
+
+    // Effective context in ms (the requested value if the model is not loaded yet)
+    int get_context_ms() {
+        std::lock_guard<std::mutex> lock{m_mutex};
+        if (m_model) return m_model->get_context_ms();
+        return m_requested_context_ms.value_or(0);
+    }
+
+    bool is_model_loaded() {
+        std::lock_guard<std::mutex> lock{m_mutex};
+        return m_model != nullptr;
     }
 
 
@@ -311,6 +331,7 @@ private:
     int                         m_threshold_window_ms;
     std::optional<int>          m_input_sr;
     std::optional<std::size_t>  m_input_vector_length;
+    std::optional<int>          m_requested_context_ms;
 
     EnergyThreshold       m_energy_threshold;
     bool                  m_initialized = false;

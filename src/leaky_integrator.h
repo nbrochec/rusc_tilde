@@ -9,7 +9,7 @@
 class LeakyIntegrator {
 public:
     std::vector<float> process(const std::vector<float>& input) {
-        auto current_time = std::chrono::system_clock::now();
+        auto current_time = std::chrono::steady_clock::now();
 
         if (!m_last_callback || m_tau < 1e-6 || m_previous_value.size() != input.size()) {
             m_last_callback = current_time;
@@ -42,7 +42,7 @@ private:
         return result;
     }
 
-    std::optional<std::chrono::time_point<std::chrono::system_clock>> m_last_callback;
+    std::optional<std::chrono::time_point<std::chrono::steady_clock>> m_last_callback;
     std::vector<float> m_previous_value;
     double m_tau = 0.0;
 };

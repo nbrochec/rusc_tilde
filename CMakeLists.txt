@@ -15,7 +15,7 @@ include(${C74_MIN_API_DIR}/script/min-package.cmake)
 set(C74_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/externals")
 
 # ── onnxruntime ───────────────────────────────────────────────────────────────
-set(ORT_VERSION "1.20.1")
+set(ORT_VERSION "1.28.0")
 set(ORT_URL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-arm64-${ORT_VERSION}.tgz")
 set(LOCAL_ORT "${CMAKE_CURRENT_SOURCE_DIR}/libs/onnxruntime")
 

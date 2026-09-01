@@ -8,12 +8,15 @@
 // No LibTorch dependency.
 
 #include <onnxruntime_cxx_api.h>
+#ifdef __APPLE__
 #include <coreml_provider_factory.h>
+#endif
 
 #include <essentia/essentia.h>
 #include <essentia/algorithmfactory.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <complex>
@@ -35,7 +38,7 @@ public:
                   const std::string& text_onnx_path,
                   const std::string& meta_json_path,
                   const std::string& tokenizer_dir,
-                  bool use_coreml = false)
+                  bool use_ane = false)
         : m_env(ORT_LOGGING_LEVEL_WARNING, "rusc_tilde")
         , m_audio_session(nullptr)
         , m_text_session(nullptr)
@@ -78,12 +81,20 @@ public:
         opts.SetInterOpNumThreads(1);
         opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-        if (use_coreml) {
+        // Apple Neural Engine via the CoreML execution provider. MLProgram is
+        // required — the older NeuralNetwork format has no ANE path for the
+        // encoder's attention blocks. Elsewhere the flag is a no-op and the
+        // encoder stays on the ORT CPU provider.
+#ifdef __APPLE__
+        if (use_ane) {
             uint32_t flags = COREML_FLAG_CREATE_MLPROGRAM;
             auto status = OrtSessionOptionsAppendExecutionProvider_CoreML(opts, flags);
             if (status != nullptr)
                 Ort::GetApi().ReleaseStatus(status);
         }
+#else
+        (void)use_ane;
+#endif
 
         m_audio_session = Ort::Session(m_env, audio_onnx_path.c_str(), opts);
         m_text_session  = Ort::Session(m_env, text_onnx_path.c_str(),  opts);
@@ -109,6 +120,8 @@ public:
     }
 
     int get_sample_rate()    const override { return m_sample_rate; }
+    int get_context_ms()     const override { return m_context_ms; }
+    int get_max_context_ms() const override { return m_default_context_ms; }
     int get_segment_length() const override {
         return static_cast<int>(std::round(
             static_cast<double>(m_context_ms) * m_sample_rate / 1000.0));
@@ -276,20 +289,37 @@ private:
         return ss.str();
     }
 
+    // Minimal flat-JSON lookup: returns the raw text following `"key":`.
+    // Only matches a quoted key that is followed by ':' (skipping whitespace),
+    // so a string value that happens to contain the key is not mistaken for it.
+    static std::string find_value(const std::string& json, const std::string& key) {
+        const std::string quoted = "\"" + key + "\"";
+        std::size_t pos = 0;
+        while ((pos = json.find(quoted, pos)) != std::string::npos) {
+            std::size_t after = pos + quoted.size();
+            while (after < json.size() && std::isspace(static_cast<unsigned char>(json[after]))) ++after;
+            if (after < json.size() && json[after] == ':') {
+                ++after;
+                while (after < json.size() && std::isspace(static_cast<unsigned char>(json[after]))) ++after;
+                return json.substr(after);
+            }
+            pos = after;
+        }
+        throw std::runtime_error("Key not found in meta JSON: " + key);
+    }
+
     static int parse_int(const std::string& json, const std::string& key) {
-        auto pos = json.find("\"" + key + "\"");
-        if (pos == std::string::npos)
-            throw std::runtime_error("Key not found in meta JSON: " + key);
-        pos = json.find(':', pos) + 1;
-        return std::stoi(json.substr(pos));
+        try { return std::stoi(find_value(json, key)); }
+        catch (const std::invalid_argument&) {
+            throw std::runtime_error("Invalid integer for key in meta JSON: " + key);
+        }
     }
 
     static float parse_float(const std::string& json, const std::string& key) {
-        auto pos = json.find("\"" + key + "\"");
-        if (pos == std::string::npos)
-            throw std::runtime_error("Key not found in meta JSON: " + key);
-        pos = json.find(':', pos) + 1;
-        return std::stof(json.substr(pos));
+        try { return std::stof(find_value(json, key)); }
+        catch (const std::invalid_argument&) {
+            throw std::runtime_error("Invalid float for key in meta JSON: " + key);
+        }
     }
 
     // ONNX

@@ -65,8 +65,8 @@ You can instantiate the object directly in Max such as described below:
 [rusc~]                              — auto-detects model files via Max's search path
 [rusc~ /path/to/model]               — auto-detects the .onnx file in the directory
 [rusc~ /path/to/model/rusc_tilde_audio_1000ms.onnx]
-[rusc~ /path/to/model mps]           — enable CoreML / Apple Neural Engine
-[rusc~ mps]                          — auto-detect + CoreML
+[rusc~ /path/to/model ane]           — run the encoder on the Apple Neural Engine
+[rusc~ ane]                          — auto-detect + Neural Engine
 ```
 
 For auto-detection to work, place all model files in your Max package's `media/` folder or add their directory to Max's search path.
@@ -96,10 +96,10 @@ For auto-detection to work, place all model files in your Max package's `media/`
 | `enabled` | 1 | Turn inference on/off without stopping DSP. |
 | `threshold` | −80 dB | Energy gate — audio below this level is ignored. |
 | `window` | 20 ms | Look-back window for the energy gate. |
-| `context` | 500 ms | Audio context window fed to the model. Shorter = more reactive; longer = more temporal context. |
+| `context` | 1000 ms | Audio context window fed to the model (minimum 100 ms, capped at the exported model's context). Shorter = more reactive; longer = more temporal context. |
 | `confidence` | 0.0 | Minimum winning-class probability to output a result. Below this, all outlets are silent. |
 | `sensitivity` | 1.0 | Smoothing on the probability distribution over time. 0 = maximum smoothing, 1 = no smoothing. |
-| `sensitivityrange` | 1000 ms | Time constant range for the smoothing. Scales the effect of `sensitivity`. |
+| `sensitivityrange` | 2000 ms | Time constant range for the smoothing. Scales the effect of `sensitivity`. |
 | `verbose` | 0 | Print extra information to the Max console. |
 
 ---

@@ -27,8 +27,8 @@
 		</objarg>
 
 		<objarg name='device' optional='1' type='symbol'>
-			<digest>Inference device: 'cpu' or 'mps'</digest>
-			<description>Inference device: 'cpu' or 'mps'. Optional, defaults to 'cpu'. </description>
+			<digest>Inference device: 'cpu' or 'ane'</digest>
+			<description>Inference device: 'cpu' or 'ane'. Optional, defaults to 'cpu'. 'ane' runs the audio encoder through CoreML on the Apple Neural Engine and is ignored on non-Apple builds. 'mps' is accepted as a legacy alias for 'ane'. </description>
 		</objarg>
 
 	</objarglist>
@@ -70,7 +70,7 @@
 
 		<method name='set_classes'>
 			<digest>Set class names for zero-shot CLAP inference</digest>
-			<description>Set class names for zero-shot CLAP inference. Separate class names with a comma atom. Example (message box): set_class violin pizzicato , flute multiphonics </description>
+			<description>Set class names for zero-shot CLAP inference. Each atom is one class name; use underscores for multi-word names. Replaces the current class set. Example (message box): set_classes violin_pizzicato flute_multiphonics </description>
 		</method>
 
 		<method name='set'>
@@ -92,7 +92,7 @@
 
 		<attribute name='context' get='1' set='1' type='long' size='1' >
 			<digest>Audio context window for inference in milliseconds</digest>
-			<description>Audio context window for inference in milliseconds. Longer windows capture more temporal structure but increase latency. Re-exports the model are not required — context is set at runtime. </description>
+			<description>Audio context window for inference in milliseconds (minimum 100). Longer windows capture more temporal structure but increase latency. Capped at the context length the model was exported with; re-exporting the model is not required to use a shorter context. </description>
 		</attribute>
 
 		<attribute name='enabled' get='1' set='1' type='long' size='1' >

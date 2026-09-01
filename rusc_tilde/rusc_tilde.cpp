@@ -1,6 +1,8 @@
 #include "c74_min.h"
 #include <chrono>
 #include <dirent.h>
+#include <mutex>
+#include <optional>
 #include <pthread.h>
 #include <sstream>
 #include <sys/resource.h>
@@ -61,8 +63,9 @@ struct Docs {
         "Minimum confidence (0.–1.) to output a class; below threshold outputs 'no_confidence'.";
     static const inline description SET_CLASS_DESCRIPTION =
         "Set class names for zero-shot CLAP inference. "
-        "Separate class names with a comma atom. "
-        "Example (message box): set_class violin pizzicato , flute multiphonics";
+        "Each atom is one class name; use underscores for multi-word names. "
+        "Replaces the current class set. "
+        "Example (message box): set_classes violin_pizzicato flute_multiphonics";
 };
 
 
@@ -77,6 +80,11 @@ private:
     std::atomic<bool> m_running          = false;
     std::atomic<bool> m_enabled          = true;
     std::atomic<bool> m_model_initialized = false;
+
+    // DSP configuration received before the model finished loading.
+    // Applied by the background thread once the model is ready.
+    std::mutex                          m_dsp_mutex;
+    std::optional<std::pair<int, int>>  m_pending_dsp;   // {sr, vector_length}
 
     LeakyIntegrator m_integrator;
 
@@ -97,24 +105,26 @@ public:
     // First arg (optional): path to rusc_tilde_audio_*.onnx, or the directory containing all model files.
     //   If omitted, the model is auto-detected via Max's search path (place model files in
     //   the package's media/ folder or add their directory to Max's search path).
-    // Second arg (optional): device — "cpu" or "mps"  (default: cpu)
+    // Second arg (optional): device — "cpu" or "ane"  (default: cpu)
+    //   ane  runs the audio encoder through CoreML on the Apple Neural Engine;
+    //        ignored on non-Apple builds. "mps" is accepted as a legacy alias.
     argument<symbol> model_arg {this, "model",
         "Path to model directory or rusc_tilde_audio_*.onnx. Optional — auto-detected if omitted."};
     argument<symbol> device_arg{this, "device",
-        "Inference device: 'cpu' or 'mps'. Optional, defaults to 'cpu'."};
+        "Inference device: 'cpu' or 'ane'. Optional, defaults to 'cpu'."};
 
     explicit rusc_tilde(const atoms& args = {}) {
         try {
             auto paths = parse_paths(args);
-            bool use_coreml = parse_use_coreml(args);
+            bool use_ane = parse_use_ane(args);
             cout << "[rusc~] model: " << paths.model_path << endl;
-            cout << "[rusc~] ONNX backend" << (use_coreml ? " — CoreML EP (MPS)" : " — CPU") << endl;
+            cout << "[rusc~] ONNX backend" << (use_ane ? " — CoreML EP (ANE)" : " — CPU") << endl;
 
             m_classifier = std::make_unique<ClapClassifier>(
-                [p = paths, use_coreml]() {
+                [p = paths, use_ane]() {
                     return std::make_unique<ClapModelONNX>(
                         p.model_path, p.text_onnx_path, p.meta_json_path,
-                        p.tokenizer_dir, use_coreml);
+                        p.tokenizer_dir, use_ane);
                 });
             cout << "[rusc~] classifier created, loading model on background thread..." << endl;
         } catch (std::exception& e) {
@@ -263,16 +273,19 @@ public:
 
     attribute<int> context{this, "context", 1000,
         title {"Context Length"},
-        description {"Audio context window for inference in milliseconds. "
+        description {"Audio context window for inference in milliseconds (minimum 100). "
                      "Longer windows capture more temporal structure but increase latency. "
-                     "Re-exports the model are not required — context is set at runtime."},
+                     "Capped at the context length the model was exported with; "
+                     "re-exporting the model is not required to use a shorter context."},
         setter{MIN_FUNCTION {
             if (args.size() == 1
                 && (args[0].type() == c74::min::message_type::int_argument
                     || args[0].type() == c74::min::message_type::float_argument))
             {
                 int ms = std::max(100, static_cast<int>(args[0]));
-                if (m_classifier) m_classifier->set_context_ms(ms);
+                // Once the model is loaded the classifier returns the effective (clamped)
+                // value, so the attribute always reflects what is actually used.
+                if (m_classifier) ms = m_classifier->set_context_ms(ms);
                 return {ms};
             }
             cerr << "bad argument for message \"context\"" << endl;
@@ -540,25 +553,29 @@ public:
         if (!m_classifier) return {};
         m_classifier->set_energy_threshold(threshold.get());
         m_classifier->set_threshold_window(window.get());
+        m_classifier->set_context_ms(context.get());
         m_processing_thread = std::thread(&rusc_tilde::main_loop, this);
         return {};
     }};
 
-    // Called when DSP is enabled/restarted
+    // Called when DSP is enabled/restarted.
+    // Never blocks the main thread: if the model is still loading, the DSP
+    // configuration is stored and applied by the background thread once ready.
     message<> dspsetup{this, "dspsetup", MIN_FUNCTION {
         int sr            = args[0];
         int vector_length = args[1];
 
-        while (!m_model_initialized) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!m_classifier) {
+            cerr << "[rusc~] dspsetup: object failed to initialize (see errors above)" << endl;
+            return {};
         }
 
-        if (m_running) {
-            m_classifier->initialize_buffers(sr, vector_length);
-            cout << "[rusc~] buffers ready — sr: " << sr
-                 << " vec: " << vector_length << endl;
+        std::lock_guard<std::mutex> lock{m_dsp_mutex};
+        if (!m_model_initialized) {
+            m_pending_dsp = std::make_pair(sr, vector_length);
+            cout << "[rusc~] dspsetup: model still loading, buffers will be set up when ready" << endl;
         } else {
-            cerr << "[rusc~] dspsetup: model not running (load failed?)" << endl;
+            apply_dsp_config(sr, vector_length);
         }
         return {};
     }};
@@ -567,6 +584,17 @@ public:
     buffer_reference m_record_buf{this, MIN_FUNCTION { return {}; }};
 
 private:
+    // Requires m_dsp_mutex to be held and the model load attempt to be finished.
+    void apply_dsp_config(int sr, int vector_length) {
+        if (m_running) {
+            m_classifier->initialize_buffers(sr, vector_length);
+            cout << "[rusc~] buffers ready — sr: " << sr
+                 << " vec: " << vector_length << endl;
+        } else {
+            cerr << "[rusc~] dspsetup: model not running (load failed?)" << endl;
+        }
+    }
+
     void main_loop() {
         // Lower OS priority so patch editing / Max UI stays responsive
         setpriority(PRIO_PROCESS, 0, 10);
@@ -576,13 +604,26 @@ private:
             m_running = true;
             cout << "[rusc~] model loaded — segment length: "
                  << m_classifier->get_segment_length() << " samples" << endl;
+
+            int requested = context.get();
+            int effective = m_classifier->get_context_ms();
+            if (effective != requested)
+                cerr << "[rusc~] context " << requested << " ms exceeds the exported model's "
+                     << effective << " ms; using " << effective << " ms" << endl;
         } catch (const std::exception& e) {
             cerr << "[rusc~] model load error: " << e.what() << endl;
         } catch (...) {
             cerr << "[rusc~] unknown error during model loading" << endl;
         }
 
-        m_model_initialized = true;
+        {
+            std::lock_guard<std::mutex> lock{m_dsp_mutex};
+            m_model_initialized = true;
+            if (m_pending_dsp) {
+                apply_dsp_config(m_pending_dsp->first, m_pending_dsp->second);
+                m_pending_dsp.reset();
+            }
+        }
 
         try {
             std::vector<double> buffered;
@@ -724,10 +765,10 @@ private:
         auto u = s;
         std::transform(u.begin(), u.end(), u.begin(),
                        [](unsigned char c) { return std::toupper(c); });
-        return u == "CPU" || u == "MPS";
+        return u == "CPU" || u == "ANE" || u == "MPS";
     }
 
-    static bool parse_use_coreml(const atoms& args) {
+    static bool parse_use_ane(const atoms& args) {
         // Device arg may be at index 0 (if no model path) or index 1
         for (std::size_t i = 0; i < args.size(); ++i) {
             if (args[i].type() == c74::min::message_type::symbol_argument) {
@@ -736,7 +777,9 @@ private:
                     auto u = s;
                     std::transform(u.begin(), u.end(), u.begin(),
                                    [](unsigned char c) { return std::toupper(c); });
-                    if (u == "MPS") return true;
+                    // "mps" predates the CoreML EP and only ever meant
+                    // "not the CPU"; it stays valid for existing patches.
+                    if (u == "ANE" || u == "MPS") return true;
                     if (u == "CPU") return false;
                 }
             }
