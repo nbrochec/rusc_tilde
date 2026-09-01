@@ -1,6 +1,6 @@
 
-#ifndef CLAP_TILDE_UTILITY_H
-#define CLAP_TILDE_UTILITY_H
+#ifndef RUSC_TILDE_UTILITY_H
+#define RUSC_TILDE_UTILITY_H
 
 #include <vector>
 #include <cmath>
@@ -43,4 +43,4 @@ static inline std::vector<float> to_floats(const std::vector<double>& v) {
 
 } // namespace util
 
-#endif //CLAP_TILDE_UTILITY_H
+#endif //RUSC_TILDE_UTILITY_H

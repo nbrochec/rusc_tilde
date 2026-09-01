@@ -1,6 +1,6 @@
 
-#ifndef CLAP_TILDE_BPE_TOKENIZER_H
-#define CLAP_TILDE_BPE_TOKENIZER_H
+#ifndef RUSC_TILDE_BPE_TOKENIZER_H
+#define RUSC_TILDE_BPE_TOKENIZER_H
 
 // RoBERTa byte-level BPE tokenizer (matches laion/clap-htsat-fused tokenizer).
 // Loads vocab.json and merges.txt exported by scripts/export_clap.py.
@@ -295,4 +295,4 @@ private:
     int m_bos_id, m_eos_id, m_pad_id;
 };
 
-#endif //CLAP_TILDE_BPE_TOKENIZER_H
+#endif //RUSC_TILDE_BPE_TOKENIZER_H

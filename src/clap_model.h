@@ -1,5 +1,5 @@
-#ifndef CLAP_TILDE_CLAP_MODEL_H
-#define CLAP_TILDE_CLAP_MODEL_H
+#ifndef RUSC_TILDE_CLAP_MODEL_H
+#define RUSC_TILDE_CLAP_MODEL_H
 
 #include <vector>
 #include <string>
@@ -31,4 +31,4 @@ struct IClapModel {
     virtual void set_context_ms(int ms) = 0;
 };
 
-#endif //CLAP_TILDE_CLAP_MODEL_H
+#endif //RUSC_TILDE_CLAP_MODEL_H

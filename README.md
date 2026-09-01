@@ -46,10 +46,10 @@ conda run -n clap python scripts/export_clap_onnx.py
 This downloads `laion/clap-htsat-fused` from HuggingFace and writes the following files to `./model/`:
 
 ```
-rusc_tilde_audio_1000ms.onnx  — audio encoder, 1000ms context
-rusc_tilde_text.onnx          — text encoder
-rusc_tilde_meta.json          — model metadata
-rusc_tilde_mel_filters.bin    — mel filterbank coefficients
+clap_audio_1000ms.onnx  — audio encoder, 1000ms context
+clap_text.onnx          — text encoder
+clap_meta.json          — model metadata
+clap_mel_filters.bin    — mel filterbank coefficients
 vocab.json / merges.txt       — BPE tokenizer files
 ```
 
@@ -64,7 +64,7 @@ You can instantiate the object directly in Max such as described below:
 ```
 [rusc~]                              — auto-detects model files via Max's search path
 [rusc~ /path/to/model]               — auto-detects the .onnx file in the directory
-[rusc~ /path/to/model/rusc_tilde_audio_1000ms.onnx]
+[rusc~ /path/to/model/clap_audio_1000ms.onnx]
 [rusc~ /path/to/model ane]           — run the encoder on the Apple Neural Engine
 [rusc~ ane]                          — auto-detect + Neural Engine
 ```

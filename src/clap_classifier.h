@@ -1,6 +1,6 @@
 
-#ifndef CLAP_TILDE_CLAP_CLASSIFIER_H
-#define CLAP_TILDE_CLAP_CLASSIFIER_H
+#ifndef RUSC_TILDE_CLAP_CLASSIFIER_H
+#define RUSC_TILDE_CLAP_CLASSIFIER_H
 
 #include <algorithm>
 #include <cmath>
@@ -364,4 +364,4 @@ private:
 };
 
 
-#endif //CLAP_TILDE_CLAP_CLASSIFIER_H
+#endif //RUSC_TILDE_CLAP_CLASSIFIER_H

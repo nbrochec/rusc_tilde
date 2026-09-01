@@ -1,6 +1,6 @@
 
-#ifndef CLAP_TILDE_ENERGY_THRESHOLD_H
-#define CLAP_TILDE_ENERGY_THRESHOLD_H
+#ifndef RUSC_TILDE_ENERGY_THRESHOLD_H
+#define RUSC_TILDE_ENERGY_THRESHOLD_H
 
 #include <vector>
 #include <cmath>
@@ -37,4 +37,4 @@ private:
     double m_threshold_db;
 };
 
-#endif //CLAP_TILDE_ENERGY_THRESHOLD_H
+#endif //RUSC_TILDE_ENERGY_THRESHOLD_H

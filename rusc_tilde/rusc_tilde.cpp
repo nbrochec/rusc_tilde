@@ -102,14 +102,14 @@ public:
     outlet<> outlet_distribution{this, "(list) class probability distribution"};
     outlet<> dumpout            {this, "(any) dumpout"};
 
-    // First arg (optional): path to rusc_tilde_audio_*.onnx, or the directory containing all model files.
+    // First arg (optional): path to clap_audio_*.onnx, or the directory containing all model files.
     //   If omitted, the model is auto-detected via Max's search path (place model files in
     //   the package's media/ folder or add their directory to Max's search path).
     // Second arg (optional): device — "cpu" or "ane"  (default: cpu)
     //   ane  runs the audio encoder through CoreML on the Apple Neural Engine;
     //        ignored on non-Apple builds. "mps" is accepted as a legacy alias.
     argument<symbol> model_arg {this, "model",
-        "Path to model directory or rusc_tilde_audio_*.onnx. Optional — auto-detected if omitted."};
+        "Path to model directory or clap_audio_*.onnx. Optional — auto-detected if omitted."};
     argument<symbol> device_arg{this, "device",
         "Inference device: 'cpu' or 'ane'. Optional, defaults to 'cpu'."};
 
@@ -664,8 +664,8 @@ private:
 
     // Accepts:
     //   - no args           → auto-detect via Max's search path
-    //   - path to rusc_tilde_audio_<N>ms.onnx
-    //   - path to a directory containing rusc_tilde_audio_*.onnx
+    //   - path to clap_audio_<N>ms.onnx
+    //   - path to a directory containing clap_audio_*.onnx
     static ModelPaths parse_paths(const atoms& args) {
         // Auto-detect: no argument provided or first arg is a device string
         bool no_path_arg = args.empty()
@@ -684,7 +684,7 @@ private:
             p.model_path    = find_audio_onnx_in_dir(resolved);
             p.tokenizer_dir = resolved;
             if (p.model_path.empty())
-                throw std::runtime_error("No rusc_tilde_audio_*.onnx found in: " + resolved);
+                throw std::runtime_error("No clap_audio_*.onnx found in: " + resolved);
         } else {
             if (path_extension(resolved) != ".onnx")
                 throw std::runtime_error("Expected an .onnx file or directory, got: " + resolved);
@@ -698,7 +698,7 @@ private:
     // Auto-detect model files via Max's search path.
     // Place model files in the package's media/ folder or add their directory to Max's search path.
     static ModelPaths auto_detect_paths() {
-        c74::min::path meta_search{"rusc_tilde_meta.json"};
+        c74::min::path meta_search{"clap_meta.json"};
         auto meta_native = static_cast<std::string>(meta_search);
         if (meta_native.empty() || !path_exists(meta_native))
             throw std::runtime_error(
@@ -711,18 +711,18 @@ private:
         p.model_path     = find_audio_onnx_in_dir(p.tokenizer_dir);
         if (p.model_path.empty())
             throw std::runtime_error(
-                "[rusc~] rusc_tilde_meta.json found but no rusc_tilde_audio_*.onnx in: "
+                "[rusc~] clap_meta.json found but no clap_audio_*.onnx in: "
                 + p.tokenizer_dir);
-        p.text_onnx_path = path_join(p.tokenizer_dir, "rusc_tilde_text.onnx");
+        p.text_onnx_path = path_join(p.tokenizer_dir, "clap_text.onnx");
 
         return validate_paths(p);
     }
 
     static ModelPaths validate_paths(ModelPaths p) {
         if (p.text_onnx_path.empty())
-            p.text_onnx_path = path_join(p.tokenizer_dir, "rusc_tilde_text.onnx");
+            p.text_onnx_path = path_join(p.tokenizer_dir, "clap_text.onnx");
         if (p.meta_json_path.empty())
-            p.meta_json_path = path_join(p.tokenizer_dir, "rusc_tilde_meta.json");
+            p.meta_json_path = path_join(p.tokenizer_dir, "clap_meta.json");
 
         if (!path_exists(p.model_path))
             throw std::runtime_error("Audio ONNX not found: " + p.model_path);
@@ -738,13 +738,13 @@ private:
         return p;
     }
 
-    // Find the first rusc_tilde_audio_*.onnx in a directory using POSIX readdir.
+    // Find the first clap_audio_*.onnx in a directory using POSIX readdir.
     static std::string find_audio_onnx_in_dir(const std::string& dir) {
         DIR* d = opendir(dir.c_str());
         if (!d) return {};
         std::string result;
         struct dirent* entry;
-        const std::string prefix = "rusc_tilde_audio";
+        const std::string prefix = "clap_audio";
         const std::string suffix = ".onnx";
         while ((entry = readdir(d)) != nullptr) {
             std::string name = entry->d_name;

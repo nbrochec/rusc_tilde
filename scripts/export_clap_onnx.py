@@ -7,10 +7,10 @@ Usage (from the rusc_tilde project root):
     conda run -n clap python scripts/export_clap_onnx.py --default-context-ms 500
 
 Outputs in --output-dir (default: ./model):
-    rusc_tilde_audio_<N>ms.onnx  — audio encoder (fixed frame count baked from context)
-    rusc_tilde_text.onnx          — text encoder
-    rusc_tilde_meta.json          — sr, default_context_ms, seglen, nb_max_frames, ...
-    rusc_tilde_mel_filters.bin    — float32 [513 × 64] mel filterbank
+    clap_audio_<N>ms.onnx  — audio encoder (fixed frame count baked from context)
+    clap_text.onnx          — text encoder
+    clap_meta.json          — sr, default_context_ms, seglen, nb_max_frames, ...
+    clap_mel_filters.bin    — float32 [513 × 64] mel filterbank
     vocab.json                    — RoBERTa BPE vocabulary
     merges.txt                    — BPE merge rules
 
@@ -167,7 +167,7 @@ def main():
     parser.add_argument("--output-dir",          default="model",
                         help="Output directory (default: ./model)")
     parser.add_argument("--device",              default="cpu",
-                        help="Torch device for export (cpu|mps)")
+                        help="Torch device used by PyTorch for the export (cpu|mps)")
     parser.add_argument("--max-text-length",     type=int, default=77)
     parser.add_argument("--default-context-ms",  type=int, default=1000,
                         help="Max audio context window in ms (default: 1000). "
@@ -221,8 +221,8 @@ def main():
     ).to(device)
 
     # ── 4. Export ────────────────────────────────────────────────────────────
-    audio_onnx_path = output_dir / f"rusc_tilde_audio_{args.default_context_ms}ms.onnx"
-    text_onnx_path  = output_dir / "rusc_tilde_text.onnx"
+    audio_onnx_path = output_dir / f"clap_audio_{args.default_context_ms}ms.onnx"
+    text_onnx_path  = output_dir / "clap_text.onnx"
 
     print(f"Exporting audio encoder → {audio_onnx_path}")
     export_audio_encoder(audio_wrapper, device, audio_onnx_path, nb_max_frames)
@@ -241,13 +241,13 @@ def main():
         "max_text_length":    args.max_text_length,
         "logit_scale_a":      float(model.logit_scale_a.item()),
     }
-    meta_path = output_dir / "rusc_tilde_meta.json"
+    meta_path = output_dir / "clap_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2))
     print(f"Metadata sidecar        → {meta_path}")
 
     # ── 6. Save mel filterbank ───────────────────────────────────────────────
     import numpy as np
-    mel_path = output_dir / "rusc_tilde_mel_filters.bin"
+    mel_path = output_dir / "clap_mel_filters.bin"
     mel_np   = fe.mel_filters.copy().astype(np.float32)   # [513, 64] row-major
     mel_np.tofile(str(mel_path))
     print(f"Mel filters             → {mel_path}  ({mel_np.shape}, float32)")
@@ -271,7 +271,7 @@ def main():
     print("Load in Max:")
     print(f"  rusc~                     (auto-detect via Max search path)")
     print(f"  rusc~ {output_dir}        (explicit directory)")
-    print(f"  rusc~ {output_dir} mps    (CoreML / Apple Silicon)")
+    print(f"  rusc~ {output_dir} ane    (Apple Neural Engine via CoreML)")
     print(f"Use @context <ms> to set shorter context at runtime (zero-padded to {nb_max_frames} frames).")
 
 

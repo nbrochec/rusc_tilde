@@ -1,6 +1,6 @@
 
-#ifndef CLAP_TILDE_LEAKY_INTEGRATOR_H
-#define CLAP_TILDE_LEAKY_INTEGRATOR_H
+#ifndef RUSC_TILDE_LEAKY_INTEGRATOR_H
+#define RUSC_TILDE_LEAKY_INTEGRATOR_H
 
 #include <chrono>
 #include <vector>
@@ -47,4 +47,4 @@ private:
     double m_tau = 0.0;
 };
 
-#endif //CLAP_TILDE_LEAKY_INTEGRATOR_H
+#endif //RUSC_TILDE_LEAKY_INTEGRATOR_H

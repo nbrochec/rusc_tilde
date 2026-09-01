@@ -1550,7 +1550,7 @@
 					"numoutlets" : 4,
 					"outlettype" : [ "", "", "", "" ],
 					"patching_rect" : [ 337.0, 727.0, 593.0, 22.0 ],
-					"text" : "rusc~ /Users/nicolasbrochec/Developer/rusc_tilde/model/rusc_tilde_audio_1000ms.onnx MPS @threshold -80"
+					"text" : "rusc~ /Users/nicolasbrochec/Developer/rusc_tilde/model/clap_audio_1000ms.onnx ane @threshold -80"
 				}
 
 			}

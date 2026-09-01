@@ -1,6 +1,6 @@
 
-#ifndef CLAP_TILDE_CIRCULAR_BUFFER_H
-#define CLAP_TILDE_CIRCULAR_BUFFER_H
+#ifndef RUSC_TILDE_CIRCULAR_BUFFER_H
+#define RUSC_TILDE_CIRCULAR_BUFFER_H
 
 #include <vector>
 #include <cassert>
@@ -122,4 +122,4 @@ private:
 };
 
 
-#endif //CLAP_TILDE_CIRCULAR_BUFFER_H
+#endif //RUSC_TILDE_CIRCULAR_BUFFER_H

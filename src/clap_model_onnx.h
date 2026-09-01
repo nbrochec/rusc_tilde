@@ -1,5 +1,5 @@
-#ifndef CLAP_TILDE_CLAP_MODEL_ONNX_H
-#define CLAP_TILDE_CLAP_MODEL_ONNX_H
+#ifndef RUSC_TILDE_CLAP_MODEL_ONNX_H
+#define RUSC_TILDE_CLAP_MODEL_ONNX_H
 
 // ONNX Runtime backend for rusc_tilde.
 //
@@ -57,7 +57,7 @@ public:
 
         // Load mel filterbank [513, 64] from binary sidecar
         auto mel_path = meta_json_path.substr(0, meta_json_path.rfind('/') + 1)
-                        + "rusc_tilde_mel_filters.bin";
+                        + "clap_mel_filters.bin";
         m_mel_filters = load_mel_filters(mel_path);   // [513 * 64] row-major
 
         // Hann window [n_fft]
@@ -356,4 +356,4 @@ private:
 };
 
 
-#endif // CLAP_TILDE_CLAP_MODEL_ONNX_H
+#endif // RUSC_TILDE_CLAP_MODEL_ONNX_H
