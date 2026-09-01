@@ -13,7 +13,7 @@ Real-time zero-shot and few-shot audio classification in Max/MSP using [laion/cl
 
 - macOS 14+ on Apple Silicon (arm64), or Windows 10+ (x64)
 - Max 8 or later
-- CMake 3.19+, a C++17 compiler (Xcode / Visual Studio 2022)
+- CMake 3.19+, a C++17 compiler (Xcode / Visual Studio 2022 or later)
 - Python (conda env) for model export — see below
 
 ---
@@ -24,7 +24,7 @@ Real-time zero-shot and few-shot audio classification in Max/MSP using [laion/cl
 git clone --recursive https://github.com/nbrochec/rusc_tilde.git
 cd rusc_tilde
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release          # macOS
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64    # Windows
+cmake -S . -B build -A x64                              # Windows (latest Visual Studio)
 cmake --build build --config Release --target rusc_tilde
 ```
 

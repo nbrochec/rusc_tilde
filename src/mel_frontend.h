@@ -34,6 +34,15 @@ public:
         if (m_mel_filters.size() != static_cast<std::size_t>(m_n_bins) * N_MELS)
             throw std::invalid_argument("MelFrontend: mel filterbank has the wrong size");
 
+        // Transposed copy [N_MELS][n_bins]: the per-frame mel projection then reads
+        // filter coefficients contiguously, which lets the compiler vectorise it.
+        m_mel_filters_t.resize(m_mel_filters.size());
+        for (int k = 0; k < m_n_bins; ++k)
+            for (int j = 0; j < N_MELS; ++j)
+                m_mel_filters_t[static_cast<std::size_t>(j) * static_cast<std::size_t>(m_n_bins)
+                                + static_cast<std::size_t>(k)]
+                    = m_mel_filters[static_cast<std::size_t>(k) * N_MELS + static_cast<std::size_t>(j)];
+
         // Symmetric Hann window (matches the original implementation)
         constexpr float TWO_PI = 6.283185307179586f;
         m_hann_window.resize(static_cast<std::size_t>(n_fft));
@@ -83,11 +92,13 @@ public:
             power_spectrum(padded.data() + offset);
 
             std::size_t row = static_cast<std::size_t>(t) * N_MELS;
+            const float* power = m_power.data();
             for (int j = 0; j < N_MELS; ++j) {
+                const float* filt = m_mel_filters_t.data()
+                                  + static_cast<std::size_t>(j) * static_cast<std::size_t>(m_n_bins);
                 float mel_val = 0.f;
                 for (int k = 0; k < m_n_bins; ++k)
-                    mel_val += m_mel_filters[static_cast<std::size_t>(k) * N_MELS + static_cast<std::size_t>(j)]
-                             * m_power[static_cast<std::size_t>(k)];
+                    mel_val += filt[k] * power[k];
                 log_mel[row + static_cast<std::size_t>(j)] = 10.f * std::log10(std::max(mel_val, 1e-10f));
             }
         }
@@ -127,7 +138,8 @@ private:
     int m_n_fft;
     int m_hop_length;
     int m_n_bins;
-    std::vector<float> m_mel_filters;
+    std::vector<float> m_mel_filters;     // [n_bins * N_MELS] as exported
+    std::vector<float> m_mel_filters_t;   // [N_MELS * n_bins] transposed
     std::vector<float> m_hann_window;
 
     pocketfft::detail::pocketfft_r<float> m_plan;
