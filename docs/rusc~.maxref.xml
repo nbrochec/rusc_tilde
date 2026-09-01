@@ -22,8 +22,8 @@
 	<objarglist>
 
 		<objarg name='model' optional='1' type='symbol'>
-			<digest>Path to model directory or clap_audio_*.onnx</digest>
-			<description>Path to model directory or clap_audio_*.onnx. Optional — auto-detected if omitted. </description>
+			<digest>clap_audio_*.onnx file name or model directory</digest>
+			<description>File name of the audio model (clap_audio_*.onnx) or a model directory. A bare file name is located through Max's search path, so no full path is needed when the model files are inside a Max package. Optional — auto-detected if omitted. </description>
 		</objarg>
 
 		<objarg name='device' optional='1' type='symbol'>

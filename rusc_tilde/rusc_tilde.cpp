@@ -102,14 +102,16 @@ public:
     outlet<> outlet_distribution{this, "(list) class probability distribution"};
     outlet<> dumpout            {this, "(any) dumpout"};
 
-    // First arg (optional): path to clap_audio_*.onnx, or the directory containing all model files.
+    // First arg (optional): clap_audio_*.onnx (bare file name resolved via Max's search path,
+    //   or absolute path), or the directory containing all model files.
     //   If omitted, the model is auto-detected via Max's search path (place model files in
     //   the package's media/ folder or add their directory to Max's search path).
     // Second arg (optional): device — "cpu" or "ane"  (default: cpu)
     //   ane  runs the audio encoder through CoreML on the Apple Neural Engine;
     //        ignored on non-Apple builds. "mps" is accepted as a legacy alias.
     argument<symbol> model_arg {this, "model",
-        "Path to model directory or clap_audio_*.onnx. Optional — auto-detected if omitted."};
+        "clap_audio_*.onnx file name (found via Max's search path), or a model directory. "
+        "Optional — auto-detected if omitted."};
     argument<symbol> device_arg{this, "device",
         "Inference device: 'cpu' or 'ane'. Optional, defaults to 'cpu'."};
 
@@ -662,10 +664,26 @@ private:
         std::string meta_json_path;
     };
 
+    // Resolve a bare file or folder name through Max's search path
+    // (package media/ folders, user-added search paths, ...).
+    // Returns an absolute native path, or an empty string if Max cannot find it.
+    static std::string locate_in_max_search_path(const std::string& name) {
+        try {
+            c74::min::path found{name};
+            if (!found) return {};
+            auto native = static_cast<std::string>(found);
+            return path_exists(native) ? native : std::string{};
+        } catch (...) {
+            return {};   // min::path throws "file not found"
+        }
+    }
+
     // Accepts:
-    //   - no args           → auto-detect via Max's search path
-    //   - path to clap_audio_<N>ms.onnx
-    //   - path to a directory containing clap_audio_*.onnx
+    //   - no args                       → auto-detect via Max's search path
+    //   - clap_audio_<N>ms.onnx         → bare file name, located via Max's search path
+    //   - clap_audio_<N>ms              → same, ".onnx" appended if omitted
+    //   - a folder name or absolute path to a directory containing clap_audio_*.onnx
+    //   - an absolute path to clap_audio_<N>ms.onnx
     static ModelPaths parse_paths(const atoms& args) {
         // Auto-detect: no argument provided or first arg is a device string
         bool no_path_arg = args.empty()
@@ -676,8 +694,21 @@ private:
             return auto_detect_paths();
 
         auto raw = std::string(args[0]);
-        std::string resolved = (!raw.empty() && raw[0] == '/')
-            ? raw : static_cast<std::string>(c74::min::path(raw));
+        std::string resolved;
+        if (!raw.empty() && raw[0] == '/') {
+            resolved = raw;
+            if (!path_exists(resolved))
+                throw std::runtime_error("[rusc~] path not found: " + resolved);
+        } else {
+            resolved = locate_in_max_search_path(raw);
+            if (resolved.empty() && path_extension(raw).empty())
+                resolved = locate_in_max_search_path(raw + ".onnx");
+            if (resolved.empty())
+                throw std::runtime_error(
+                    "[rusc~] \"" + raw + "\" not found in Max's search path. "
+                    "Place the model files in your package's media/ folder (or add their folder "
+                    "to Max's search path), or pass an absolute path.");
+        }
 
         ModelPaths p;
         if (path_is_dir(resolved)) {

@@ -63,13 +63,15 @@ You can instantiate the object directly in Max such as described below:
 
 ```
 [rusc~]                              — auto-detects model files via Max's search path
+[rusc~ clap_audio_1000ms.onnx]       — file name only, found via Max's search path
+[rusc~ clap_audio_1000ms]            — same, ".onnx" is appended if omitted
 [rusc~ /path/to/model]               — auto-detects the .onnx file in the directory
 [rusc~ /path/to/model/clap_audio_1000ms.onnx]
-[rusc~ /path/to/model ane]           — run the encoder on the Apple Neural Engine
+[rusc~ clap_audio_1000ms.onnx ane]   — run the encoder on the Apple Neural Engine
 [rusc~ ane]                          — auto-detect + Neural Engine
 ```
 
-For auto-detection to work, place all model files in your Max package's `media/` folder or add their directory to Max's search path.
+No full path is needed: if the model files are inside a Max package (for example the package's `media/` folder) or in a folder added to Max's search path, Max finds them by name. The other model files (`clap_text.onnx`, `clap_meta.json`, `clap_mel_filters.bin`, `vocab.json`, `merges.txt`) must sit next to the `.onnx` file.
 
 ### Inlets
 
