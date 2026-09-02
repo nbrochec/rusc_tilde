@@ -145,26 +145,18 @@ public:
 
         if (!m_classification_buffer->is_fully_allocated()) return std::nullopt;
 
-        if (m_active) {
-            auto samples = m_classification_buffer->get_samples();
-            if (m_energy_threshold.is_above_threshold(samples)) {
-                auto result = m_model->classify(util::to_floats(samples), combined_embs, num_classes);
-                result.class_names = combined_names;
-                return result;
-            } else {
-                m_active = false;
-            }
-        } else {
-            if (m_energy_threshold.is_above_threshold(m_threshold_buffer->samples_unordered())) {
-                m_active = true;
-                auto samples = m_classification_buffer->get_samples();
-                auto result = m_model->classify(util::to_floats(samples), combined_embs, num_classes);
-                result.class_names = combined_names;
-                return result;
-            }
-        }
+        // The energy gate looks at the short `window` buffer (input rate) both to
+        // become active and to stay active, so entering and leaving are symmetric
+        // and no 1 s copy is needed for the check.
+        const bool above = m_energy_threshold.is_above_threshold(m_threshold_buffer->samples_unordered());
+        m_active = above;
+        if (!above) return std::nullopt;
 
-        return std::nullopt;
+        // Chronological float copy of the context window into a reused buffer
+        m_classification_buffer->copy_ordered(m_audio_scratch);
+        auto result = m_model->classify(m_audio_scratch, combined_embs, num_classes);
+        result.class_names = combined_names;
+        return result;
     }
 
 
@@ -264,7 +256,7 @@ private:
         if (!m_model) return;
 
         for (auto& p : pending) {
-            auto emb = m_model->encode_audio(std::move(p.audio));  // [512]
+            auto emb = m_model->encode_audio(p.audio);  // [512]
             if (!emb.empty()) {
                 m_audio_examples[p.label] = std::move(emb);
                 m_combined_dirty = true;
@@ -276,7 +268,7 @@ private:
             std::vector<float> avg(EMB_DIM, 0.0f);
             int count = 0;
             for (auto& audio : batch.audio_samples) {
-                auto emb = m_model->encode_audio(std::move(audio));
+                auto emb = m_model->encode_audio(audio);
                 if (emb.size() == EMB_DIM) {
                     for (std::size_t i = 0; i < EMB_DIM; ++i) avg[i] += emb[i];
                     ++count;
@@ -340,6 +332,7 @@ private:
     std::unique_ptr<IClapModel>               m_model;
     std::unique_ptr<ResamplingBuffer>         m_classification_buffer;
     std::unique_ptr<CircularBuffer<double>>   m_threshold_buffer;
+    std::vector<float>                        m_audio_scratch;     // context window as float
 
     std::vector<float>                        m_text_embeddings;   // [N * 512] row-major
     std::vector<std::string>                  m_text_class_names;

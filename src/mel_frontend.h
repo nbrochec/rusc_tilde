@@ -57,58 +57,67 @@ public:
     int n_fft()      const { return m_n_fft; }
     int hop_length() const { return m_hop_length; }
 
-    // Returns [4 * nb_frames * N_MELS] flattened, i.e. the [1, 4, nb_frames, 64] tensor.
+    // Computes the [1, 4, nb_frames, 64] tensor (flattened) and returns a reference
+    // to a buffer owned by the front-end, valid until the next call.
     // Audio is trimmed / zero-padded to `segment_length`; mel rows beyond the
-    // computed frames stay zero.
-    std::vector<float> compute(const std::vector<float>& audio,
-                               std::size_t segment_length,
-                               int64_t nb_frames) {
+    // computed frames are zero.
+    std::vector<float>& compute(const std::vector<float>& audio,
+                                      std::size_t segment_length,
+                                      int64_t nb_frames) {
         if (segment_length < 2)
             throw std::invalid_argument("MelFrontend: segment_length too small");
 
-        // 1. Trim / zero-pad to the context window
-        std::vector<float> wav(audio.begin(), audio.end());
-        wav.resize(segment_length, 0.f);
-
-        // 2. Reflect padding (matches torch.stft center=True)
+        // 1+2. Build the reflect-padded signal directly (matches torch.stft center=True):
+        //      pad | audio trimmed or zero-padded to segment_length | pad
         const std::size_t pad = static_cast<std::size_t>(m_n_fft / 2);
-        const std::size_t N   = wav.size();
-        std::vector<float> padded(pad + N + pad);
+        const std::size_t N   = segment_length;
+        const std::size_t avail = std::min(audio.size(), N);
+        m_padded.assign(pad + N + pad, 0.f);
+        float* body = m_padded.data() + pad;
+        std::copy(audio.begin(), audio.begin() + static_cast<std::ptrdiff_t>(avail), body);
         for (std::size_t i = 0; i < pad; ++i)
-            padded[pad - 1 - i] = wav[std::min(i + 1, N - 1)];
-        std::copy(wav.begin(), wav.end(), padded.begin() + static_cast<std::ptrdiff_t>(pad));
+            m_padded[pad - 1 - i] = body[std::min(i + 1, N - 1)];
         for (std::size_t i = 0; i < pad; ++i)
-            padded[pad + N + i] = wav[N - 2 - std::min(i, N - 2)];
+            m_padded[pad + N + i] = body[N - 2 - std::min(i, N - 2)];
 
-        // 3. STFT frame-by-frame → power → mel → dB
-        int64_t T_actual = (static_cast<int64_t>(padded.size()) - m_n_fft) / m_hop_length + 1;
+        // 3. STFT frame-by-frame → power → mel → dB, written into channel 0
+        int64_t T_actual = (static_cast<int64_t>(m_padded.size()) - m_n_fft) / m_hop_length + 1;
         int64_t T        = std::min(T_actual, nb_frames);
 
         const std::size_t frame_sz = static_cast<std::size_t>(nb_frames) * N_MELS;
-        std::vector<float> log_mel(frame_sz, 0.f);
+        m_features.resize(4 * frame_sz);
+        float* ch0 = m_features.data();
 
         for (int64_t t = 0; t < T; ++t) {
             std::size_t offset = static_cast<std::size_t>(t * m_hop_length);
-            power_spectrum(padded.data() + offset);
+            power_spectrum(m_padded.data() + offset);
 
-            std::size_t row = static_cast<std::size_t>(t) * N_MELS;
+            float* row = ch0 + static_cast<std::size_t>(t) * N_MELS;
             const float* power = m_power.data();
             for (int j = 0; j < N_MELS; ++j) {
                 const float* filt = m_mel_filters_t.data()
                                   + static_cast<std::size_t>(j) * static_cast<std::size_t>(m_n_bins);
-                float mel_val = 0.f;
-                for (int k = 0; k < m_n_bins; ++k)
-                    mel_val += filt[k] * power[k];
-                log_mel[row + static_cast<std::size_t>(j)] = 10.f * std::log10(std::max(mel_val, 1e-10f));
+                // 8 independent accumulators: without -ffast-math the compiler may
+                // not reorder a single float reduction, which blocks SIMD.
+                float acc[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+                int k = 0;
+                for (; k + 8 <= m_n_bins; k += 8)
+                    for (int u = 0; u < 8; ++u)
+                        acc[u] += filt[k + u] * power[k + u];
+                for (; k < m_n_bins; ++k)
+                    acc[0] += filt[k] * power[k];
+                float mel_val = (acc[0] + acc[1]) + (acc[2] + acc[3])
+                              + (acc[4] + acc[5]) + (acc[6] + acc[7]);
+                row[j] = 10.f * std::log10(std::max(mel_val, 1e-10f));
             }
         }
+        // zero padding for the frames beyond the audio
+        std::fill(ch0 + static_cast<std::size_t>(T) * N_MELS, ch0 + frame_sz, 0.f);
 
-        // 4. Tile 4× → [1, 4, nb_frames, 64] flattened
-        std::vector<float> output(4 * frame_sz);
-        for (int c = 0; c < 4; ++c)
-            std::copy(log_mel.begin(), log_mel.end(),
-                      output.begin() + static_cast<std::ptrdiff_t>(static_cast<std::size_t>(c) * frame_sz));
-        return output;
+        // 4. Tile 4× → channels 1..3 are copies of channel 0
+        for (int c = 1; c < 4; ++c)
+            std::copy(ch0, ch0 + frame_sz, ch0 + static_cast<std::size_t>(c) * frame_sz);
+        return m_features;
     }
 
     // Windowed power spectrum of one n_fft-sample frame → [n_fft/2 + 1].
@@ -143,8 +152,10 @@ private:
     std::vector<float> m_hann_window;
 
     pocketfft::detail::pocketfft_r<float> m_plan;
-    std::vector<float> m_frame;   // [n_fft], reused per frame
-    std::vector<float> m_power;   // [n_fft/2 + 1]
+    std::vector<float> m_frame;    // [n_fft], reused per frame
+    std::vector<float> m_power;    // [n_fft/2 + 1]
+    std::vector<float> m_padded;   // reflect-padded signal, reused per call
+    std::vector<float> m_features; // [4 * nb_frames * N_MELS], reused per call
 };
 
 

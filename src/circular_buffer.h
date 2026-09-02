@@ -30,16 +30,23 @@ public:
         }
     }
 
+    // Chronological copy (oldest first) into `out`, converting to U.
+    // Two contiguous copies instead of a modulo per sample; no allocation
+    // when `out` already has the right capacity.
+    template<typename U>
+    void copy_ordered(std::vector<U>& out) const {
+        const std::size_t n = m_buffer.size();
+        out.resize(n);
+        const std::size_t first = n - m_write_index;   // samples from write_index to end
+        for (std::size_t i = 0; i < first; ++i)
+            out[i] = static_cast<U>(m_buffer[m_write_index + i]);
+        for (std::size_t i = 0; i < m_write_index; ++i)
+            out[first + i] = static_cast<U>(m_buffer[i]);
+    }
+
     std::vector<T> get_samples() const {
-        std::size_t num_samples = size();
         std::vector<T> reordered;
-        reordered.reserve(num_samples);
-
-        size_t start = m_write_index;
-        for (size_t i = 0; i < num_samples; ++i) {
-            reordered.push_back(m_buffer[(start + i) % num_samples]);
-        }
-
+        copy_ordered(reordered);
         return reordered;
     }
 
@@ -105,6 +112,8 @@ public:
     }
 
     std::vector<double> get_samples() const { return m_buffer.get_samples(); }
+    template<typename U>
+    void copy_ordered(std::vector<U>& out) const { m_buffer.copy_ordered(out); }
     bool is_fully_allocated() const { return m_buffer.is_fully_allocated(); }
 
 private:

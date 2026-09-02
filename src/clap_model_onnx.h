@@ -116,7 +116,7 @@ public:
     }
 
     // Returns [512] float32 L2-normalised audio embedding.
-    std::vector<float> encode_audio(std::vector<float> audio) override {
+    std::vector<float> encode_audio(const std::vector<float>& audio) override {
         return run_audio_encoder(audio);
     }
 
@@ -146,7 +146,7 @@ public:
     }
 
     // text_embs: [num_classes * 512] row-major
-    ClassificationResult classify(std::vector<float> audio,
+    ClassificationResult classify(const std::vector<float>& audio,
                                   const std::vector<float>& text_embs,
                                   int num_classes) override {
         auto t1        = std::chrono::steady_clock::now();
@@ -188,7 +188,8 @@ private:
     // Shared audio encoder: waveform → features → ONNX → [512]
     std::vector<float> run_audio_encoder(const std::vector<float>& audio) {
         const int64_t nf = static_cast<int64_t>(m_nb_max_frames);
-        auto feats = m_frontend->compute(
+        // Features live in a buffer owned by the front-end; the tensor only wraps it.
+        auto& feats = m_frontend->compute(
             audio, static_cast<std::size_t>(get_segment_length()), nf);   // [4 * nf * 64]
 
         const std::vector<int64_t> feat_shape = {1, 4, nf, MelFrontend::N_MELS};

@@ -17,10 +17,10 @@ struct IClapModel {
     virtual std::vector<float> encode_text(const std::vector<std::string>& class_names) = 0;
 
     // Returns [512] float32 L2-normalised audio embedding
-    virtual std::vector<float> encode_audio(std::vector<float> audio) = 0;
+    virtual std::vector<float> encode_audio(const std::vector<float>& audio) = 0;
 
     // text_embs: [num_classes * 512] row-major; num_classes must equal text_embs.size()/512
-    virtual ClassificationResult classify(std::vector<float> audio,
+    virtual ClassificationResult classify(const std::vector<float>& audio,
                                           const std::vector<float>& text_embs,
                                           int num_classes) = 0;
 
