@@ -264,15 +264,32 @@ struct MockModel : IClapModel {
     void set_context_ms(int) override {}
 };
 
-// Feed audio for `max_ms` and return the class names of the last result.
-static std::vector<std::string> pump(ClapClassifier& c, int max_ms) {
+// Feed audio until the classifier reports `expected` (or the timeout expires) and
+// return the names of the last result. Iteration-based: no fixed sleeps, so it is
+// not sensitive to slow CI runners or coarse timer granularity.
+static std::vector<std::string> pump_until(ClapClassifier& c, const std::vector<std::string>& expected,
+                                           int timeout_ms = 5000) {
     std::vector<std::string> names;
     auto t0 = std::chrono::steady_clock::now();
-    while (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < max_ms) {
+    while (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < timeout_ms) {
         std::vector<double> v(64, 0.5);
         auto r = c.process(std::move(v));
         if (r) names = r->class_names;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (names == expected) break;
+        std::this_thread::yield();
+    }
+    return names;
+}
+
+// Feed a fixed number of vectors (enough for any queued encoding to land) and
+// return the names of the last result.
+static std::vector<std::string> pump_n(ClapClassifier& c, int iterations) {
+    std::vector<std::string> names;
+    for (int i = 0; i < iterations; ++i) {
+        std::vector<double> v(64, 0.5);
+        auto r = c.process(std::move(v));
+        if (r) names = r->class_names;
+        std::this_thread::yield();
     }
     return names;
 }
@@ -299,32 +316,32 @@ static void test_classifier() {
     CHECK(c.get_class_names().empty(), "no classes yet: nothing to output");
 
     c.set_classes({"kick", "snare"});
-    auto names = pump(c, 400);   // buffer fill (75 vectors) + 30 ms mock encoding
+    auto names = pump_until(c, {"kick", "snare"});
     CHECK_NAMES(names, std::vector<std::string>({"kick", "snare"}), "set_classes installs the encoded list");
 
     c.add_classes({"hihat", "kick"});
-    names = pump(c, 150);
+    names = pump_until(c, {"kick", "snare", "hihat"});
     CHECK_NAMES(names, std::vector<std::string>({"kick", "snare", "hihat"}), "add_class appends without duplicates");
 
     // back-to-back requests compose even while the first is still encoding
     c.set_classes({"a"});
     c.add_classes({"b"});
-    names = pump(c, 200);
+    names = pump_until(c, {"a", "b"});
     CHECK_NAMES(names, std::vector<std::string>({"a", "b"}), "set_classes followed by add_class before encoding finished");
 
     // few-shot: a record then an immediate clear must not resurrect the label
     c.queue_audio_example("voice", std::vector<float>(4800, 0.1f));
-    names = pump(c, 150);
+    names = pump_until(c, {"a", "b", "voice"});
     CHECK_NAMES(names, std::vector<std::string>({"a", "b", "voice"}), "record adds an audio-only label");
 
     c.queue_audio_example("late", std::vector<float>(4800, 0.1f));
     c.clear_audio_examples("late");
-    names = pump(c, 150);
+    names = pump_n(c, 3000);   // the mock encoder is instant: a wrong result would have landed by now
     CHECK(std::find(names.begin(), names.end(), "late") == names.end(),
           "clear_example right after record drops the pending result");
 
     c.clear_audio_examples();
-    names = pump(c, 150);
+    names = pump_until(c, {"a", "b"});
     CHECK_NAMES(names, std::vector<std::string>({"a", "b"}), "clear_examples removes audio-only labels");
 }
 
