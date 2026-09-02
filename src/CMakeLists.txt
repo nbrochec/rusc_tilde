@@ -7,6 +7,7 @@ target_sources(rusc_dsp INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}/leaky_integrator.h
         ${CMAKE_CURRENT_SOURCE_DIR}/mel_frontend.h
         ${CMAKE_CURRENT_SOURCE_DIR}/bpe_tokenizer.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/spsc_ring.h
 )
 target_include_directories(rusc_dsp INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}

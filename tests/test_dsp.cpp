@@ -6,6 +6,7 @@
 #include "energy_threshold.h"
 #include "leaky_integrator.h"
 #include "mel_frontend.h"
+#include "spsc_ring.h"
 
 #include <chrono>
 #include <cmath>
@@ -191,8 +192,60 @@ static void test_resampling_buffer() {
 }
 
 
+// ── SpscRing ───────────────────────────────────────────────────────────────────
+static void test_spsc_ring() {
+    std::printf("SpscRing\n");
+    SpscRing<double> ring(100);
+    CHECK(ring.capacity() == 128, "capacity rounds up to a power of two");
+
+    std::vector<double> block(64);
+    for (std::size_t i = 0; i < block.size(); ++i) block[i] = static_cast<double>(i);
+    CHECK(ring.write(block.data(), 64) == 64, "first block fits");
+    CHECK(ring.write(block.data(), 64) == 64, "second block fits (ring full)");
+    CHECK(ring.write(block.data(), 64) == 0, "third block is dropped, never blocks");
+    CHECK(ring.available() == 128, "128 samples waiting");
+
+    std::vector<double> out;
+    CHECK(ring.read_all(out) == 128 && out.size() == 128, "read_all drains everything");
+    CHECK(out[0] == 0 && out[63] == 63 && out[64] == 0 && out[127] == 63, "order preserved");
+    CHECK(ring.read_all(out) == 0 && out.size() == 128, "empty ring appends nothing");
+
+    // Wrap-around: write 100, read, write 64 (crosses the end), read
+    out.clear();
+    std::vector<double> hundred(100, 7.0);
+    ring.write(hundred.data(), 100); ring.read_all(out);
+    out.clear();
+    ring.write(block.data(), 64); ring.read_all(out);
+    bool ok = out.size() == 64;
+    for (std::size_t i = 0; ok && i < 64; ++i) ok = out[i] == static_cast<double>(i);
+    CHECK(ok, "wrap-around keeps sample order");
+
+    // Producer / consumer threads: every sample arrives exactly once, in order
+    SpscRing<double> ring2(4096);
+    const std::size_t total = 200000;
+    std::vector<double> received; received.reserve(total);
+    std::thread consumer([&] {
+        while (received.size() < total) {
+            if (ring2.read_all(received) == 0) std::this_thread::yield();
+        }
+    });
+    std::size_t sent = 0;
+    while (sent < total) {
+        double chunk[64];
+        std::size_t n = std::min<std::size_t>(64, total - sent);
+        for (std::size_t i = 0; i < n; ++i) chunk[i] = static_cast<double>(sent + i);
+        sent += ring2.write(chunk, n);   // retries the remainder when full
+    }
+    consumer.join();
+    ok = received.size() == total;
+    for (std::size_t i = 0; ok && i < total; ++i) ok = received[i] == static_cast<double>(i);
+    CHECK(ok, "two threads: 200k samples delivered once, in order");
+}
+
+
 int main() {
     test_circular_buffer();
+    test_spsc_ring();
     test_energy_threshold();
     test_leaky_integrator();
     test_mel_frontend();

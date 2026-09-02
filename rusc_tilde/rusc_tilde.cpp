@@ -22,6 +22,7 @@
 #include "clap_classifier.h"
 #include "clap_model_onnx.h"
 #include "leaky_integrator.h"
+#include "spsc_ring.h"
 #include "utility.h"
 
 using namespace c74::min;
@@ -101,7 +102,7 @@ private:
     std::unique_ptr<ClapClassifier> m_classifier;
 
     std::thread                     m_processing_thread;
-    c74::min::fifo<double>          m_audio_fifo{65536};
+    SpscRing<double>                m_audio_ring{65536};   // ~1.4 s at 48 kHz
     c74::min::fifo<ClassificationResult> m_event_fifo{100};
 
     std::atomic<bool> m_running          = false;
@@ -219,11 +220,8 @@ public:
 
 
     void operator()(audio_bundle in, audio_bundle) override {
-        if (in.channel_count() > 0 && m_running && m_enabled) {
-            auto* s = in.samples(0);
-            for (auto i = 0; i < in.frame_count(); ++i)
-                m_audio_fifo.try_enqueue(static_cast<double>(s[i]));
-        }
+        if (in.channel_count() > 0 && m_running && m_enabled)
+            m_audio_ring.write(in.samples(0), static_cast<std::size_t>(in.frame_count()));
     }
 
 
@@ -679,12 +677,7 @@ private:
             std::vector<double> buffered;
             buffered.reserve(65536);
             while (m_running) {
-                double sample;
-                bool got_data = false;
-                while (m_audio_fifo.try_dequeue(sample)) {
-                    buffered.push_back(sample);
-                    got_data = true;
-                }
+                bool got_data = m_audio_ring.read_all(buffered) > 0;
                 if (got_data && m_enabled) {
                     auto result = m_classifier->process(std::move(buffered));
                     buffered.clear();
