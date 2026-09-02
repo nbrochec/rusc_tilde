@@ -1,7 +1,7 @@
 # Real-time Universal Sound Classifier: rusc~ 
 
 > **Experimental.** Research prototype. Not production software. Use at own risk.
-Part of this code was implemented by Claude Opus 4.8 for faster implementation. The code have been revewied by a human before making it available online.
+> Part of this code was implemented by Claude Opus 4.8 and Claude Fable 5.1 for faster implementation. The code has been reviewed by a human before making it available online.
 
 Real-time zero-shot and few-shot audio classification in Max/MSP using [laion/clap-htsat-fused](https://huggingface.co/laion/clap-htsat-fused).
 
