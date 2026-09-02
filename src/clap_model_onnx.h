@@ -67,19 +67,28 @@ public:
         // ONNX sessions
         // intra-op threads parallelise the operators inside the encoder graph;
         // on an M4 Pro the audio encoder goes from ~53 ms (1 thread) to ~32 ms (4).
-        Ort::SessionOptions opts;
-        opts.SetIntraOpNumThreads(std::max(1, intra_op_threads));
-        opts.SetInterOpNumThreads(1);
-        opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        Ort::SessionOptions audio_opts;
+        audio_opts.SetIntraOpNumThreads(std::max(1, intra_op_threads));
+        audio_opts.SetInterOpNumThreads(1);
+        audio_opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-        // Apple Neural Engine via the CoreML execution provider. MLProgram is
-        // required — the older NeuralNetwork format has no ANE path for the
-        // encoder's attention blocks. Elsewhere the flag is a no-op and the
-        // encoder stays on the ORT CPU provider.
+        // The text encoder always stays on the CPU provider. It runs on the
+        // encoder thread, concurrently with audio inference; running two CoreML
+        // models at once inside the host (which uses Metal for its own UI) is
+        // not worth the risk, and CoreML brings nothing to a one-off encoding.
+        Ort::SessionOptions text_opts;
+        text_opts.SetIntraOpNumThreads(std::max(1, intra_op_threads));
+        text_opts.SetInterOpNumThreads(1);
+        text_opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+        // Apple Neural Engine via the CoreML execution provider, audio session
+        // only. MLProgram is required — the older NeuralNetwork format has no ANE
+        // path for the encoder's attention blocks. Elsewhere the flag is a no-op
+        // and the encoder stays on the ORT CPU provider.
 #ifdef __APPLE__
         if (use_ane) {
             uint32_t flags = COREML_FLAG_CREATE_MLPROGRAM;
-            auto status = OrtSessionOptionsAppendExecutionProvider_CoreML(opts, flags);
+            auto status = OrtSessionOptionsAppendExecutionProvider_CoreML(audio_opts, flags);
             if (status != nullptr)
                 Ort::GetApi().ReleaseStatus(status);
         }
@@ -87,8 +96,8 @@ public:
         (void)use_ane;
 #endif
 
-        m_audio_session = Ort::Session(m_env, ort_path(audio_onnx_path).c_str(), opts);
-        m_text_session  = Ort::Session(m_env, ort_path(text_onnx_path).c_str(),  opts);
+        m_audio_session = Ort::Session(m_env, ort_path(audio_onnx_path).c_str(), audio_opts);
+        m_text_session  = Ort::Session(m_env, ort_path(text_onnx_path).c_str(),  text_opts);
 
         // Cache input/output names
         Ort::AllocatorWithDefaultOptions alloc;
