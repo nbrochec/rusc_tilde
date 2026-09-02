@@ -115,6 +115,7 @@ No full path is needed, but keep the `.onnx` extension since it identifies the m
 | `confidence` | 0.0 | Minimum winning-class probability to output a result. Below this, all outlets are silent. |
 | `sensitivity` | 1.0 | Smoothing on the probability distribution over time. 0 = maximum smoothing, 1 = no smoothing. |
 | `sensitivityrange` | 2000 ms | Time constant range for the smoothing. Scales the effect of `sensitivity`. |
+| `threads` | 4 | CPU threads used inside the ONNX encoder. Set it in the object box: it is applied when the model loads. On an M4 Pro one inference takes about 53 ms with 1 thread, 32 ms with 4, 28 ms with 8. |
 | `verbose` | 0 | Print extra information to the Max console. |
 
 ---

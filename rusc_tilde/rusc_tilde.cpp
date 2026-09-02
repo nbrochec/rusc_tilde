@@ -149,11 +149,15 @@ public:
             cout << "[rusc~] model: " << paths.model_path << endl;
             cout << "[rusc~] ONNX backend" << (use_ane ? " — CoreML EP (ANE)" : " — CPU") << endl;
 
+            // The factory runs on the background thread after setup(), so the
+            // @threads attribute from the object box is already applied.
             m_classifier = std::make_unique<ClapClassifier>(
-                [p = paths, use_ane]() {
+                [this, p = paths, use_ane]() {
+                    int n = threads.get();
+                    cout << "[rusc~] ONNX intra-op threads: " << n << endl;
                     return std::make_unique<ClapModelONNX>(
                         p.model_path, p.text_onnx_path, p.meta_json_path,
-                        p.tokenizer_dir, use_ane);
+                        p.tokenizer_dir, use_ane, n);
                 });
             cout << "[rusc~] classifier created, loading model on background thread..." << endl;
         } catch (std::exception& e) {
@@ -319,6 +323,24 @@ public:
             }
             cerr << "bad argument for message \"context\"" << endl;
             return context;
+        }}
+    };
+
+    attribute<int> threads{this, "threads", 4,
+        title {"Inference Threads"},
+        description {"Number of CPU threads used inside the ONNX encoder (intra-op parallelism). "
+                     "More threads lower inference latency at the cost of CPU load; "
+                     "4 gives most of the gain on Apple Silicon. "
+                     "Applied when the model is loaded, so set it in the object box."},
+        setter{MIN_FUNCTION {
+            if (args.size() == 1 && args[0].type() == c74::min::message_type::int_argument) {
+                int n = std::max(1, static_cast<int>(args[0]));
+                if (m_model_initialized)
+                    cout << "[rusc~] threads: takes effect the next time the object is created" << endl;
+                return {n};
+            }
+            cerr << "bad argument for message \"threads\"" << endl;
+            return threads;
         }}
     };
 

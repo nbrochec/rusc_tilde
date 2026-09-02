@@ -115,6 +115,11 @@
 			<description>Minimum energy in dB required for classification (-80–0). </description>
 		</attribute>
 
+		<attribute name='threads' get='1' set='1' type='long' size='1' >
+			<digest>Number of CPU threads used inside the ONNX encoder</digest>
+			<description>Number of CPU threads used inside the ONNX encoder (intra-op parallelism). More threads lower inference latency at the cost of CPU load; 4 gives most of the gain on Apple Silicon. Applied when the model is loaded, so set it in the object box. Default 4. </description>
+		</attribute>
+
 		<attribute name='verbose' get='1' set='1' type='long' size='1' >
 			<digest>Enable or disable verbose logging</digest>
 			<description>Enable or disable verbose logging. </description>

@@ -38,7 +38,8 @@ public:
                   const std::string& text_onnx_path,
                   const std::string& meta_json_path,
                   const std::string& tokenizer_dir,
-                  bool use_ane = false)
+                  bool use_ane = false,
+                  int intra_op_threads = 1)
         : m_env(ORT_LOGGING_LEVEL_WARNING, "rusc_tilde")
         , m_audio_session(nullptr)
         , m_text_session(nullptr)
@@ -63,8 +64,10 @@ public:
             m_n_fft, m_hop_length, load_mel_filters(mel_path, n_bins * MelFrontend::N_MELS));
 
         // ONNX sessions
+        // intra-op threads parallelise the operators inside the encoder graph;
+        // on an M4 Pro the audio encoder goes from ~53 ms (1 thread) to ~32 ms (4).
         Ort::SessionOptions opts;
-        opts.SetIntraOpNumThreads(1);
+        opts.SetIntraOpNumThreads(std::max(1, intra_op_threads));
         opts.SetInterOpNumThreads(1);
         opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
