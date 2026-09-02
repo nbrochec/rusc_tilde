@@ -80,8 +80,8 @@ You can instantiate the object directly in Max such as described below:
 [rusc~ clap_audio_1000ms.onnx]       — file name only, found via Max's search path
 [rusc~ /path/to/model]               — auto-detects the .onnx file in the directory
 [rusc~ /path/to/model/clap_audio_1000ms.onnx]
-[rusc~ clap_audio_1000ms.onnx ane]   — run the encoder on the Apple Neural Engine
-[rusc~ ane]                          — auto-detect + Neural Engine
+[rusc~ clap_audio_1000ms.onnx ane]   — CoreML execution provider (experimental, see Performance)
+[rusc~ ane]                          — auto-detect + CoreML
 ```
 
 No full path is needed, but keep the `.onnx` extension since it identifies the model format: if the model files are inside a Max package (for example the package's `media/` folder) or in a folder added to Max's search path, Max finds them by name. The other model files (`clap_text.onnx`, `clap_meta.json`, `clap_mel_filters.bin`, `vocab.json`, `merges.txt`) must sit next to the `.onnx` file.
@@ -115,7 +115,7 @@ No full path is needed, but keep the `.onnx` extension since it identifies the m
 | `confidence` | 0.0 | Minimum winning-class probability to output a result. Below this, all outlets are silent. |
 | `sensitivity` | 1.0 | Smoothing on the probability distribution over time. 0 = maximum smoothing, 1 = no smoothing. |
 | `sensitivityrange` | 2000 ms | Time constant range for the smoothing. Scales the effect of `sensitivity`. |
-| `threads` | 4 | CPU threads used inside the ONNX encoder. Set it in the object box: it is applied when the model loads. On an M4 Pro one inference takes about 53 ms with 1 thread, 32 ms with 4, 28 ms with 8. |
+| `threads` | 4 | CPU threads used inside the ONNX encoder. Set it in the object box: it is applied when the model loads. See [Performance](#performance). |
 | `verbose` | 0 | Print extra information to the Max console. |
 
 ---
@@ -146,6 +146,27 @@ Remove the audio example for a single label. The class reverts to its text embed
 
 **`clear_examples`**
 Remove all registered audio examples.
+
+---
+
+## Performance
+
+Latency of one inference (audio encoder, 1 s context, `clap_audio_1000ms.onnx`), measured on an Apple M4 Pro with ONNX Runtime 1.28. Best and mean of 20 runs after warm-up.
+
+| Backend | Best | Mean | Notes |
+|---|---|---|---|
+| CPU, `@threads 1` | 53 ms | 55 ms | |
+| CPU, `@threads 2` | 40 ms | 41 ms | |
+| CPU, `@threads 4` (default) | 32 ms | 32 ms | most of the gain, moderate CPU load |
+| CPU, `@threads 8` | 28 ms | 28 ms | diminishing returns |
+| CoreML `ane` (all units) | 29 ms | 37 ms | 33 s model load, 2.4 s first run |
+| CoreML CPU+GPU | 41 ms | 42 ms | 25 s model load |
+
+The mel front-end adds about 1.3 ms and the class scoring is negligible, so total latency is the encoder time plus the `context` window.
+
+**About `ane`.** With the current ONNX export the CoreML provider can only take 863 of the 946 graph nodes and splits the encoder into 33 partitions, because HTSAT's patch embedding and `is_longer` logic produce dynamically-shaped tensors (`NonZero`, unbounded reshapes) that CoreML refuses. The remaining nodes run on the ORT CPU provider and the data crosses back and forth, which cancels the Neural Engine's advantage. Results are numerically identical to the CPU path (max difference 1e-7). Until the export is rewritten with static shapes, `ane` is not recommended: use the CPU with `@threads 4` or more.
+
+The CPU thread count is set once when the ONNX session is created, so put `@threads` in the object box.
 
 ---
 
