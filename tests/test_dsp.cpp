@@ -7,6 +7,7 @@
 #include "leaky_integrator.h"
 #include "mel_frontend.h"
 #include "spsc_ring.h"
+#include "clap_classifier.h"
 
 #include <chrono>
 #include <cmath>
@@ -14,6 +15,9 @@
 #include <cstdio>
 #include <random>
 #include <thread>
+#include <algorithm>
+#include <memory>
+#include <string>
 #include <vector>
 
 static int g_failures = 0;
@@ -243,9 +247,92 @@ static void test_spsc_ring() {
 }
 
 
+// ── ClapClassifier (encoder thread, class bookkeeping) ─────────────────────────
+struct MockModel : IClapModel {
+    std::vector<float> encode_text(const std::vector<std::string>& n) override {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));   // "slow" text encoder
+        return std::vector<float>(n.size() * 512, 0.1f);
+    }
+    std::vector<float> encode_audio(const std::vector<float>&) override { return std::vector<float>(512, 0.2f); }
+    ClassificationResult classify(const std::vector<float>&, const std::vector<float>&, int n) override {
+        return ClassificationResult{std::vector<float>(static_cast<std::size_t>(n), 1.f / static_cast<float>(n)), 0.0, {}};
+    }
+    int get_sample_rate() const override { return 48000; }
+    int get_segment_length() const override { return 4800; }
+    int get_context_ms() const override { return 100; }
+    int get_max_context_ms() const override { return 100; }
+    void set_context_ms(int) override {}
+};
+
+// Feed audio for `max_ms` and return the class names of the last result.
+static std::vector<std::string> pump(ClapClassifier& c, int max_ms) {
+    std::vector<std::string> names;
+    auto t0 = std::chrono::steady_clock::now();
+    while (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < max_ms) {
+        std::vector<double> v(64, 0.5);
+        auto r = c.process(std::move(v));
+        if (r) names = r->class_names;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return names;
+}
+
+static std::string join(const std::vector<std::string>& v) {
+    std::string s;
+    for (auto& x : v) { if (!s.empty()) s += ","; s += x; }
+    return s.empty() ? "(none)" : s;
+}
+#define CHECK_NAMES(got, expected, msg)                                        \
+    do {                                                                       \
+        std::vector<std::string> e_ = expected;                                \
+        if (got != e_) std::printf("        got: %s\n", join(got).c_str());    \
+        CHECK(got == e_, msg);                                                 \
+    } while (0)
+
+static void test_classifier() {
+    std::printf("ClapClassifier\n");
+    ClapClassifier c([] { return std::make_unique<MockModel>(); }, -80.0, 20);
+    c.initialize_model();
+    c.initialize_buffers(48000, 64);
+
+    for (int i = 0; i < 100; ++i) { std::vector<double> v(64, 0.5); c.process(std::move(v)); }
+    CHECK(c.get_class_names().empty(), "no classes yet: nothing to output");
+
+    c.set_classes({"kick", "snare"});
+    auto names = pump(c, 400);   // buffer fill (75 vectors) + 30 ms mock encoding
+    CHECK_NAMES(names, std::vector<std::string>({"kick", "snare"}), "set_classes installs the encoded list");
+
+    c.add_classes({"hihat", "kick"});
+    names = pump(c, 150);
+    CHECK_NAMES(names, std::vector<std::string>({"kick", "snare", "hihat"}), "add_class appends without duplicates");
+
+    // back-to-back requests compose even while the first is still encoding
+    c.set_classes({"a"});
+    c.add_classes({"b"});
+    names = pump(c, 200);
+    CHECK_NAMES(names, std::vector<std::string>({"a", "b"}), "set_classes followed by add_class before encoding finished");
+
+    // few-shot: a record then an immediate clear must not resurrect the label
+    c.queue_audio_example("voice", std::vector<float>(4800, 0.1f));
+    names = pump(c, 150);
+    CHECK_NAMES(names, std::vector<std::string>({"a", "b", "voice"}), "record adds an audio-only label");
+
+    c.queue_audio_example("late", std::vector<float>(4800, 0.1f));
+    c.clear_audio_examples("late");
+    names = pump(c, 150);
+    CHECK(std::find(names.begin(), names.end(), "late") == names.end(),
+          "clear_example right after record drops the pending result");
+
+    c.clear_audio_examples();
+    names = pump(c, 150);
+    CHECK_NAMES(names, std::vector<std::string>({"a", "b"}), "clear_examples removes audio-only labels");
+}
+
+
 int main() {
     test_circular_buffer();
     test_spsc_ring();
+    test_classifier();
     test_energy_threshold();
     test_leaky_integrator();
     test_mel_frontend();

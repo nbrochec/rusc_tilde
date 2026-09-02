@@ -4,12 +4,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
-#include <vector>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "clap_model.h"
 #include "circular_buffer.h"
@@ -29,6 +33,10 @@ public:
             , m_energy_threshold(energy_threshold_db) {}
 
 
+    ~ClapClassifier() {
+        stop_encoder_thread();
+    }
+
     void initialize_model() {
         std::lock_guard<std::mutex> lock{m_mutex};
         m_model = m_model_factory();
@@ -36,6 +44,7 @@ public:
         if (m_requested_context_ms)
             m_model->set_context_ms(*m_requested_context_ms);
         m_initialized = is_initialized();
+        start_encoder_thread();
     }
 
 
@@ -85,36 +94,38 @@ public:
     }
 
 
+    // Class requests are queued in order, so `set_classes a` immediately followed
+    // by `add_class b` yields {a, b} instead of losing the first message.
     void set_classes(std::vector<std::string> class_names) {
         std::lock_guard<std::mutex> lock{m_class_mutex};
-        m_pending_classes = std::move(class_names);
-        m_classes_pending = true;
-        m_classes_additive = false;
+        m_class_requests.push_back({std::move(class_names), false});
     }
 
     void add_classes(std::vector<std::string> class_names) {
         std::lock_guard<std::mutex> lock{m_class_mutex};
-        m_pending_classes = std::move(class_names);
-        m_classes_pending = true;
-        m_classes_additive = true;
+        m_class_requests.push_back({std::move(class_names), true});
     }
 
+    // Epochs are captured at queue time: a clear issued after this call (even
+    // before the example has been encoded) invalidates the result.
     void queue_audio_example(const std::string& label, std::vector<float> audio_samples) {
         std::lock_guard<std::mutex> lock{m_class_mutex};
-        m_pending_audio.push_back({label, std::move(audio_samples)});
+        m_pending_audio.push_back({label, std::move(audio_samples), m_audio_epoch, m_label_epoch[label]});
     }
 
     void queue_audio_examples_batch(const std::string& label, std::vector<std::vector<float>> batch) {
         std::lock_guard<std::mutex> lock{m_class_mutex};
-        m_pending_audio_batches.push_back({label, std::move(batch)});
+        m_pending_audio_batches.push_back({label, std::move(batch), m_audio_epoch, m_label_epoch[label]});
     }
 
     void clear_audio_examples(const std::string& label = "") {
         std::lock_guard<std::mutex> lock{m_class_mutex};
         if (label.empty()) {
             m_clear_all_examples = true;
+            ++m_audio_epoch;
         } else {
             m_clear_labels.push_back(label);
+            ++m_label_epoch[label];
         }
     }
 
@@ -126,6 +137,7 @@ public:
 
         apply_pending_classes();
         apply_pending_audio();
+        apply_encoder_results();
 
         if (m_combined_dirty) {
             auto [embs, names] = build_combined();
@@ -192,35 +204,141 @@ private:
         return m_model && m_classification_buffer && m_threshold_buffer && m_input_sr.has_value();
     }
 
-    void apply_pending_classes() {
-        bool pending = false;
+    // ── Encoder worker ──────────────────────────────────────────────────────
+    // Text and few-shot audio encodings run on their own thread so that the
+    // inference thread keeps classifying with the previous prototypes instead
+    // of stalling for the duration of the text encoder.
+
+    enum class JobType { Text, Audio, AudioBatch };
+    struct EncodeJob {
+        JobType                          type;
+        std::vector<std::string>         names;         // Text: full class list
+        std::string                      label;         // Audio / AudioBatch
+        std::vector<float>               audio;         // Audio
+        std::vector<std::vector<float>>  batch;         // AudioBatch
+        std::uint64_t                    audio_epoch = 0;
+        std::uint64_t                    label_epoch = 0;
+    };
+    struct EncodeResult {
+        JobType                  type;
         std::vector<std::string> names;
-        bool additive = false;
+        std::string              label;
+        std::vector<float>       embedding;   // Text: [N*512], Audio: [512]
+        std::uint64_t            audio_epoch = 0;
+        std::uint64_t            label_epoch = 0;
+    };
+
+    void start_encoder_thread() {
+        if (m_encoder_thread.joinable()) return;
+        m_encoder_stop = false;
+        m_encoder_thread = std::thread([this] { encoder_loop(); });
+    }
+
+    void stop_encoder_thread() {
         {
-            std::lock_guard<std::mutex> class_lock{m_class_mutex};
-            if (m_classes_pending) {
-                pending = true;
-                names = m_pending_classes;
-                additive = m_classes_additive;
-                m_classes_pending = false;
-            }
+            std::lock_guard<std::mutex> lock{m_job_mutex};
+            m_encoder_stop = true;
         }
-        if (pending && m_model) {
-            if (additive) {
-                for (const auto& n : names) {
-                    if (std::find(m_text_class_names.begin(), m_text_class_names.end(), n)
-                            == m_text_class_names.end())
-                        m_text_class_names.push_back(n);
-                }
-                m_text_embeddings = m_model->encode_text(m_text_class_names);
-            } else {
-                m_text_embeddings = m_model->encode_text(names);
-                m_text_class_names = std::move(names);
+        m_job_cv.notify_all();
+        if (m_encoder_thread.joinable()) m_encoder_thread.join();
+    }
+
+    void post_job(EncodeJob job) {
+        {
+            std::lock_guard<std::mutex> lock{m_job_mutex};
+            m_jobs.push_back(std::move(job));
+        }
+        m_job_cv.notify_one();
+    }
+
+    void encoder_loop() {
+        for (;;) {
+            EncodeJob job;
+            {
+                std::unique_lock<std::mutex> lock{m_job_mutex};
+                m_job_cv.wait(lock, [this] { return m_encoder_stop || !m_jobs.empty(); });
+                if (m_encoder_stop) return;
+                job = std::move(m_jobs.front());
+                m_jobs.pop_front();
             }
-            m_combined_dirty = true;
+
+            EncodeResult res;
+            res.type        = job.type;
+            res.label       = job.label;
+            res.audio_epoch = job.audio_epoch;
+            res.label_epoch = job.label_epoch;
+            try {
+                switch (job.type) {
+                    case JobType::Text:
+                        res.names     = job.names;
+                        res.embedding = m_model->encode_text(job.names);
+                        break;
+                    case JobType::Audio:
+                        res.embedding = m_model->encode_audio(job.audio);
+                        break;
+                    case JobType::AudioBatch:
+                        res.embedding = average_embeddings(job.batch);
+                        break;
+                }
+            } catch (...) {
+                continue;   // a failed encoding leaves the current prototypes untouched
+            }
+
+            std::lock_guard<std::mutex> lock{m_class_mutex};
+            m_results.push_back(std::move(res));
         }
     }
 
+    // Mean of the L2-normalised embeddings of several takes, re-normalised.
+    std::vector<float> average_embeddings(const std::vector<std::vector<float>>& batch) {
+        constexpr std::size_t EMB_DIM = 512;
+        std::vector<float> avg(EMB_DIM, 0.0f);
+        int count = 0;
+        for (const auto& audio : batch) {
+            auto emb = m_model->encode_audio(audio);
+            if (emb.size() == EMB_DIM) {
+                for (std::size_t i = 0; i < EMB_DIM; ++i) avg[i] += emb[i];
+                ++count;
+            }
+        }
+        if (count == 0) return {};
+        float inv = 1.0f / static_cast<float>(count);
+        for (auto& v : avg) v *= inv;
+        float norm = 0.0f;
+        for (auto v : avg) norm += v * v;
+        norm = std::sqrt(norm);
+        if (norm > 1e-8f) for (auto& v : avg) v /= norm;
+        return avg;
+    }
+
+    // Called from process() under m_mutex: turn pending class requests into jobs.
+    void apply_pending_classes() {
+        std::deque<ClassRequest> requests;
+        {
+            std::lock_guard<std::mutex> class_lock{m_class_mutex};
+            requests.swap(m_class_requests);
+        }
+        if (requests.empty() || !m_model) return;
+
+        // Fold all queued requests into one list, merging against the last *requested*
+        // list so they compose even while a previous encoding is still running.
+        // Only the final list is sent to the encoder.
+        std::vector<std::string> full = m_text_names_requested;
+        for (auto& req : requests) {
+            if (!req.additive) full.clear();
+            for (auto& n : req.names)
+                if (std::find(full.begin(), full.end(), n) == full.end())
+                    full.push_back(std::move(n));
+        }
+        m_text_names_requested = full;
+
+        EncodeJob job;
+        job.type  = JobType::Text;
+        job.names = std::move(full);
+        post_job(std::move(job));
+    }
+
+    // Called from process() under m_mutex: clears apply immediately, encodings become jobs.
     void apply_pending_audio() {
         std::vector<PendingAudio> pending;
         std::vector<PendingAudioBatch> pending_batches;
@@ -256,34 +374,52 @@ private:
         if (!m_model) return;
 
         for (auto& p : pending) {
-            auto emb = m_model->encode_audio(p.audio);  // [512]
-            if (!emb.empty()) {
-                m_audio_examples[p.label] = std::move(emb);
-                m_combined_dirty = true;
-            }
+            EncodeJob job;
+            job.type        = JobType::Audio;
+            job.label       = p.label;
+            job.audio       = std::move(p.audio);
+            job.audio_epoch = p.audio_epoch;
+            job.label_epoch = p.label_epoch;
+            post_job(std::move(job));
+        }
+        for (auto& b : pending_batches) {
+            EncodeJob job;
+            job.type        = JobType::AudioBatch;
+            job.label       = b.label;
+            job.batch       = std::move(b.audio_samples);
+            job.audio_epoch = b.audio_epoch;
+            job.label_epoch = b.label_epoch;
+            post_job(std::move(job));
+        }
+    }
+
+    // Called from process() under m_mutex: install finished encodings.
+    void apply_encoder_results() {
+        std::deque<EncodeResult> results;
+        std::uint64_t audio_epoch = 0;
+        std::map<std::string, std::uint64_t> label_epochs;
+        {
+            std::lock_guard<std::mutex> class_lock{m_class_mutex};
+            if (m_results.empty()) return;
+            results.swap(m_results);
+            audio_epoch  = m_audio_epoch;
+            label_epochs = m_label_epoch;
         }
 
-        for (auto& batch : pending_batches) {
-            constexpr std::size_t EMB_DIM = 512;
-            std::vector<float> avg(EMB_DIM, 0.0f);
-            int count = 0;
-            for (auto& audio : batch.audio_samples) {
-                auto emb = m_model->encode_audio(audio);
-                if (emb.size() == EMB_DIM) {
-                    for (std::size_t i = 0; i < EMB_DIM; ++i) avg[i] += emb[i];
-                    ++count;
-                }
+        for (auto& r : results) {
+            if (r.type == JobType::Text) {
+                m_text_embeddings  = std::move(r.embedding);
+                m_text_class_names = std::move(r.names);
+                m_combined_dirty   = true;
+                continue;
             }
-            if (count > 0) {
-                float inv = 1.0f / static_cast<float>(count);
-                for (auto& v : avg) v *= inv;
-                float norm = 0.0f;
-                for (auto v : avg) norm += v * v;
-                norm = std::sqrt(norm);
-                if (norm > 1e-8f) for (auto& v : avg) v /= norm;
-                m_audio_examples[batch.label] = std::move(avg);
-                m_combined_dirty = true;
-            }
+            if (r.embedding.empty()) continue;
+            // Drop the result if the label (or everything) was cleared after it was queued
+            auto it = label_epochs.find(r.label);
+            std::uint64_t current_label_epoch = it == label_epochs.end() ? 0 : it->second;
+            if (r.audio_epoch != audio_epoch || r.label_epoch != current_label_epoch) continue;
+            m_audio_examples[r.label] = std::move(r.embedding);
+            m_combined_dirty = true;
         }
     }
 
@@ -341,17 +477,30 @@ private:
     std::vector<float>                        m_cached_combined_embs;
     bool                                      m_combined_dirty = true;
 
-    std::mutex               m_class_mutex;
-    std::vector<std::string> m_pending_classes;
-    bool                     m_classes_pending  = false;
-    bool                     m_classes_additive = false;
+    std::vector<std::string>                  m_text_names_requested;   // last list sent to the encoder
 
-    struct PendingAudio      { std::string label; std::vector<float> audio; };
-    struct PendingAudioBatch { std::string label; std::vector<std::vector<float>> audio_samples; };
+    struct ClassRequest { std::vector<std::string> names; bool additive; };
+
+    std::mutex               m_class_mutex;
+    std::deque<ClassRequest> m_class_requests;
+    std::deque<EncodeResult> m_results;                    // filled by the encoder thread
+    std::uint64_t                        m_audio_epoch = 0; // bumped by clear_examples
+    std::map<std::string, std::uint64_t> m_label_epoch;     // bumped by clear_example <label>
+
+    struct PendingAudio      { std::string label; std::vector<float> audio;
+                               std::uint64_t audio_epoch; std::uint64_t label_epoch; };
+    struct PendingAudioBatch { std::string label; std::vector<std::vector<float>> audio_samples;
+                               std::uint64_t audio_epoch; std::uint64_t label_epoch; };
     std::vector<PendingAudio>      m_pending_audio;
     std::vector<PendingAudioBatch> m_pending_audio_batches;
     bool m_clear_all_examples = false;
     std::vector<std::string> m_clear_labels;
+
+    std::thread             m_encoder_thread;
+    std::mutex              m_job_mutex;
+    std::condition_variable m_job_cv;
+    std::deque<EncodeJob>   m_jobs;
+    bool                    m_encoder_stop = false;
 
     std::mutex m_mutex;
 };

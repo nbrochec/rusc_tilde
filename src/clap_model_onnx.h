@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -185,8 +186,12 @@ private:
     static const std::string& ort_path(const std::string& utf8) { return utf8; }
 #endif
 
-    // Shared audio encoder: waveform → features → ONNX → [512]
+    // Shared audio encoder: waveform → features → ONNX → [512].
+    // Serialised: classify() (inference thread) and encode_audio() (few-shot
+    // encoder thread) share the front-end buffers. Text encoding is not
+    // affected and runs concurrently.
     std::vector<float> run_audio_encoder(const std::vector<float>& audio) {
+        std::lock_guard<std::mutex> lock{m_audio_mutex};
         const int64_t nf = static_cast<int64_t>(m_nb_max_frames);
         // Features live in a buffer owned by the front-end; the tensor only wraps it.
         auto& feats = m_frontend->compute(
@@ -267,6 +272,7 @@ private:
 
     std::unique_ptr<BPETokenizer> m_tokenizer;
     std::unique_ptr<MelFrontend>  m_frontend;
+    std::mutex                    m_audio_mutex;
 
     // Model parameters
     int   m_sample_rate;
